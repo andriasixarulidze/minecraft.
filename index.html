@@ -1,0 +1,2763 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>მაინქრაფთი 3D - ვოქსელ სენდბოქსი</title>
+    <!-- Tailwind CSS for clean HUD and Overlay UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js r128 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Georgian-friendly modern font -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Georgian:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100dvh;
+            overflow: hidden;
+            touch-action: none;
+            background-color: #141b2d;
+            font-family: 'Noto Sans Georgian', sans-serif;
+        }
+        #gameCanvas {
+            display: block;
+            width: 100vw;
+            height: 100dvh;
+        }
+        /* Crosshair styling */
+        .crosshair {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            width: 22px;
+            height: 22px;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 20;
+            mix-blend-mode: difference;
+        }
+        .crosshair::before, .crosshair::after {
+            content: '';
+            position: absolute;
+            background: rgba(255, 255, 255, 0.92);
+        }
+        .crosshair::before {
+            top: 10px;
+            left: 0;
+            width: 22px;
+            height: 2px;
+        }
+        .crosshair::after {
+            top: 0;
+            left: 10px;
+            width: 2px;
+            height: 22px;
+        }
+        /* Hotbar slot pixel border feel */
+        .hotbar-slot {
+            transition: transform 0.1s ease, border-color 0.1s ease, background-color 0.1s ease;
+        }
+        .hotbar-slot.active {
+            transform: translateY(-4px) scale(1.06);
+            border-color: #ffffff;
+            background-color: rgba(255, 255, 255, 0.28);
+            box-shadow: 0 0 14px rgba(255, 255, 255, 0.45);
+        }
+        /* Damage vignette flash */
+        @keyframes hurtPulse {
+            0% { opacity: 0.65; }
+            100% { opacity: 0; }
+        }
+        .hurt-flash {
+            animation: hurtPulse 0.45s ease-out forwards;
+        }
+        /* Custom subtle scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 999px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Main 3D Canvas -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- Red Damage Flash Overlay -->
+    <div id="hurtOverlay" class="fixed inset-0 pointer-events-none z-30 bg-red-600/50 opacity-0"></div>
+
+    <!-- Center Crosshair & Live Target Tooltip (Shows what block/zombie you are aiming at) -->
+    <div id="crosshair" class="crosshair hidden"></div>
+    <div id="targetTooltip" class="fixed top-[53%] left-1/2 -translate-x-1/2 z-20 pointer-events-none hidden">
+        <div id="targetTooltipText" class="bg-slate-950/80 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs sm:text-sm font-bold border border-white/20 shadow-lg whitespace-nowrap">
+            მიზანი: ბალახი
+        </div>
+    </div>
+
+    <!-- Landscape Rotation Prompt Banner (Appears when rotated on mobile so user can tap Fullscreen) -->
+    <div id="landscapeBanner" class="fixed top-14 left-1/2 -translate-x-1/2 z-30 hidden">
+        <button id="landscapeFsBtn" type="button" class="bg-gradient-to-r from-amber-500 to-rose-600 text-white font-extrabold px-4 py-1.5 rounded-full shadow-2xl border-2 border-white/60 text-xs sm:text-sm flex items-center gap-2 animate-bounce cursor-pointer">
+            <span>⛶</span>
+            <span>ეკრანის გაფართოება (სრული ეკრანი)</span>
+        </button>
+    </div>
+
+    <!-- Top-Left Status, Skin Badge, Health & Zombie Counter HUD -->
+    <div id="hudTop" class="fixed top-2 left-2 sm:top-3 sm:left-3 z-20 flex flex-col gap-1 pointer-events-none hidden max-w-[68vw]">
+        <div class="bg-slate-900/80 backdrop-blur-md text-white px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-2xl border border-white/15 shadow-lg flex flex-wrap items-center gap-2 sm:gap-3 text-xs sm:text-sm">
+            <!-- Active Skin Badge -->
+            <div id="skinBadge" class="px-2 py-0.5 rounded-lg bg-indigo-500/35 border border-indigo-300/40 text-indigo-100 font-extrabold text-[11px] sm:text-xs">
+                🧑 ანდრია
+            </div>
+            <!-- Player Hearts -->
+            <div id="healthContainer" class="flex items-center gap-1 text-rose-400 font-extrabold" title="სიცოცხლე">
+                <span id="heartsDisplay">❤️❤️❤️❤️❤️</span>
+            </div>
+            <div class="h-4 w-px bg-white/20"></div>
+            <!-- Zombie Kill Counter -->
+            <div class="flex items-center gap-1 text-emerald-300 font-bold">
+                <span>🧟</span>
+                <span id="zombieKillsDisplay">0</span>
+            </div>
+            <div id="coordsDisplay" class="font-mono text-slate-300 hidden md:block text-xs">X: 128 | Y: 20 | Z: 128</div>
+        </div>
+    </div>
+
+    <!-- Top-Right Quick Controls (Fullscreen / Screen Expansion, Day/Night, Audio, Pause) -->
+    <div class="fixed top-2 right-2 sm:top-3 sm:right-3 z-30 flex items-center gap-1.5">
+        <button id="fullscreenBtn" title="სრული ეკრანი / ეკრანის გაფართოება" class="bg-emerald-600/90 hover:bg-emerald-500 text-white px-2.5 py-2 sm:px-3 sm:py-2.5 rounded-xl border border-emerald-300/50 shadow-lg backdrop-blur-md transition active:scale-95 flex items-center gap-1 text-xs sm:text-sm font-extrabold cursor-pointer">
+            <span>⛶</span>
+            <span id="fullscreenLabel">სრული ეკრანი</span>
+        </button>
+        <button id="timeBtn" title="დღე / ღამე (N)" class="bg-slate-900/80 hover:bg-slate-800 text-white p-2 sm:p-2.5 rounded-xl border border-white/20 shadow-lg backdrop-blur-md transition active:scale-95 text-xs sm:text-sm font-semibold cursor-pointer">
+            <span id="timeIcon">🌙</span>
+        </button>
+        <button id="muteBtn" title="ხმის ჩართვა/გამორთვა (M)" class="bg-slate-900/80 hover:bg-slate-800 text-white p-2 sm:p-2.5 rounded-xl border border-white/20 shadow-lg backdrop-blur-md transition active:scale-95 text-xs sm:text-sm font-semibold cursor-pointer">
+            <span id="muteIcon">🔊</span>
+        </button>
+        <button id="pauseBtn" title="მენიუ / სკინები" class="bg-slate-900/80 hover:bg-slate-800 text-white p-2 sm:p-2.5 rounded-xl border border-white/20 shadow-lg backdrop-blur-md transition active:scale-95 text-xs sm:text-sm font-semibold cursor-pointer">
+            ⚙️
+        </button>
+    </div>
+
+    <!-- Mobile Touch Controls (Left Virtual Joystick + Right Action Buttons) -->
+    <div id="touchControls" class="fixed inset-0 z-20 pointer-events-none hidden">
+        <!-- Left Joystick Zone -->
+        <div id="joystickZone" class="fixed bottom-20 sm:bottom-24 left-3 sm:left-5 w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-slate-900/45 border-2 border-white/25 backdrop-blur-sm pointer-events-auto flex items-center justify-center">
+            <div id="joystickKnob" class="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white/75 border-2 border-white shadow-lg transition-transform duration-75"></div>
+        </div>
+
+        <!-- Right Action Buttons (Attack/Shoot, Place, Jump, Fly) -->
+        <div class="fixed bottom-20 sm:bottom-24 right-3 sm:right-5 flex flex-col gap-2 pointer-events-auto">
+            <div class="flex gap-2">
+                <button id="touchBreakBtn" class="w-14 h-14 rounded-2xl bg-rose-600/85 active:bg-rose-500 text-white font-bold border-2 border-rose-300/60 shadow-xl flex flex-col items-center justify-center text-[11px]">
+                    <span class="text-lg">🔫</span>
+                    <span>სროლა</span>
+                </button>
+                <button id="touchPlaceBtn" class="w-14 h-14 rounded-2xl bg-sky-600/85 active:bg-sky-500 text-white font-bold border-2 border-sky-300/60 shadow-xl flex flex-col items-center justify-center text-[11px]">
+                    <span class="text-lg">🧱</span>
+                    <span>დადება</span>
+                </button>
+            </div>
+            <div class="flex gap-2">
+                <button id="touchJumpBtn" class="flex-1 h-11 rounded-2xl bg-emerald-600/85 active:bg-emerald-500 text-white font-bold border-2 border-emerald-300/60 shadow-xl flex items-center justify-center gap-1 text-xs">
+                    <span>⬆️ ახტომა</span>
+                </button>
+                <button id="touchFlyBtn" class="w-12 h-11 rounded-2xl bg-indigo-600/85 active:bg-indigo-500 text-white font-bold border-2 border-indigo-300/60 shadow-xl flex items-center justify-center text-sm" title="ფრენა">
+                    🕊️
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Hotbar UI + 200-Item Backpack Button -->
+    <div id="hotbarContainer" class="fixed bottom-1.5 sm:bottom-3 left-1/2 -translate-x-1/2 z-20 flex flex-col items-center gap-1 pointer-events-none hidden w-full max-w-4xl px-2">
+        <!-- Active Item / Block Name Banner -->
+        <div id="selectedBlockLabel" class="bg-slate-950/85 backdrop-blur-md text-amber-300 px-3.5 py-0.5 rounded-full text-[11px] sm:text-xs font-extrabold border border-amber-400/30 shadow-lg">
+            არჩეული: ⚔️ ალმასის ხმალი
+        </div>
+        <!-- 8 Hotbar Slots + Backpack Trigger -->
+        <div class="flex items-center gap-1.5 bg-slate-950/85 backdrop-blur-md p-1.5 rounded-2xl border-2 border-slate-700/80 shadow-2xl pointer-events-auto max-w-full">
+            <div id="hotbarSlots" class="grid grid-cols-8 gap-1">
+                <!-- Populated dynamically via JS -->
+            </div>
+            <button id="backpackBtn" type="button" title="ჩანთა (200 ნივთი) [E]" class="h-11 sm:h-14 px-2.5 sm:px-3.5 rounded-xl bg-gradient-to-b from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-extrabold border-2 border-amber-200 shadow-lg flex flex-col items-center justify-center cursor-pointer active:scale-95 shrink-0">
+                <span class="text-base sm:text-xl leading-none">🎒</span>
+                <span class="text-[9px] sm:text-[11px] font-black mt-0.5">ჩანთა</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 200-Item Backpack Modal (ჩანთა - 200 ნივთი) -->
+    <div id="backpackModal" class="fixed inset-0 z-50 hidden bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-4">
+        <div class="bg-slate-900 border-2 border-amber-400/40 rounded-3xl shadow-2xl w-full max-w-4xl h-[90dvh] flex flex-col overflow-hidden text-white">
+            <!-- Backpack Header -->
+            <div class="p-3 sm:p-4 bg-slate-950/80 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <span class="text-2xl">🎒</span>
+                    <div>
+                        <h2 class="text-base sm:text-xl font-extrabold text-amber-300">ჩანთა (200 ნივთი)</h2>
+                        <p class="text-[11px] text-slate-300">დააჭირე ნივთს ხელში დასაჭერად • ნათურა, ფანჯარა, კარი, ხმლები და თოფები</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input id="backpackSearch" type="text" placeholder="ძიება (მაგ: თოფი, ნათურა, კარი)..." class="bg-slate-800 border border-white/20 rounded-xl px-3 py-1.5 text-xs sm:text-sm text-white placeholder-slate-400 focus:outline-none focus:border-amber-400 w-44 sm:w-60">
+                    <button id="closeBackpackBtn" type="button" class="bg-rose-600 hover:bg-rose-500 text-white font-bold px-3.5 py-1.5 rounded-xl text-xs sm:text-sm cursor-pointer active:scale-95">
+                        ✕ დახურვა
+                    </button>
+                </div>
+            </div>
+
+            <!-- Category Tabs -->
+            <div id="backpackTabs" class="px-3 py-2 bg-slate-900/90 border-b border-white/10 flex gap-1.5 overflow-x-auto shrink-0 text-xs font-bold">
+                <button data-cat="all" class="bp-tab px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 whitespace-nowrap cursor-pointer">ყველა (200)</button>
+                <button data-cat="weapons" class="bp-tab px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 whitespace-nowrap cursor-pointer">⚔️ ხმლები და თოფები</button>
+                <button data-cat="decor" class="bp-tab px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 whitespace-nowrap cursor-pointer">💡 ნათურა, ფანჯარა, კარი</button>
+                <button data-cat="blocks" class="bp-tab px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 whitespace-nowrap cursor-pointer">🧱 ბლოკები</button>
+                <button data-cat="tools" class="bp-tab px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 whitespace-nowrap cursor-pointer">🛠️ ხელსაწყოები და საკვები</button>
+            </div>
+
+            <!-- 200 Items Scrollable Grid -->
+            <div id="backpackGrid" class="flex-1 overflow-y-auto p-3 grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2 content-start">
+                <!-- Populated with 200 items dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Start / Skin Selection / Mode Selection / Pause Overlay Screen -->
+    <div id="menuOverlay" class="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-2.5 sm:p-4">
+        <div class="bg-slate-900/95 border border-white/15 rounded-3xl shadow-2xl max-w-2xl w-full p-4 sm:p-6 text-white relative overflow-hidden max-h-[95dvh] overflow-y-auto">
+            <!-- Decorative top gradient bar -->
+            <div class="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-rose-500 via-emerald-500 to-amber-500"></div>
+
+            <div class="text-center mb-3">
+                <h1 class="text-lg sm:text-2xl font-extrabold tracking-tight text-white">
+                    🧟‍♂️ მაინქრაფთი 3D: ზომბების სამყარო
+                </h1>
+                <p id="subtitleText" class="text-slate-300 text-xs mt-0.5">
+                    აირჩიე პერსონაჟის სკინი, ჩანთა 200 ნივთით, ხმლები და თოფები!
+                </p>
+            </div>
+
+            <!-- Character Skin Selector: ანდრია, ილია, იოანე, ლუკა, გაბრიელი -->
+            <div class="mb-3.5">
+                <div class="text-[11px] uppercase tracking-wider text-indigo-300 font-extrabold mb-1.5">აირჩიე სკინი:</div>
+                <div id="skinSelector" class="grid grid-cols-5 gap-1.5 sm:gap-2">
+                    <!-- Populated via JS -->
+                </div>
+            </div>
+
+            <!-- World Mode Selector (Zombie Survival vs Creative Sandbox) -->
+            <div class="grid grid-cols-2 gap-2 mb-3.5">
+                <button id="modeZombieBtn" type="button" class="p-2.5 rounded-2xl border-2 border-rose-500 bg-rose-500/20 text-left transition cursor-pointer">
+                    <div class="font-extrabold text-xs sm:text-sm text-rose-200 flex items-center gap-1.5">
+                        <span>🧟</span> ზომბების სამყარო
+                    </div>
+                    <div class="text-[10px] sm:text-[11px] text-slate-300 mt-0.5">ზომბები გიტევენ! გამოიყენე ხმლები და თოფები. დააჭირე და შედი!</div>
+                </button>
+                <button id="modePeacefulBtn" type="button" class="p-2.5 rounded-2xl border-2 border-slate-700 bg-slate-800/60 text-left transition cursor-pointer hover:border-slate-500">
+                    <div class="font-extrabold text-xs sm:text-sm text-emerald-300 flex items-center gap-1.5">
+                        <span>🌿</span> თავისუფალი სამყარო
+                    </div>
+                    <div class="text-[10px] sm:text-[11px] text-slate-300 mt-0.5">ზომბების გარეშე, მშვიდი მშენებლობა 200 ნივთით. დააჭირე და შედი!</div>
+                </button>
+            </div>
+
+            <!-- Mobile Screen Expansion & Controls Tip -->
+            <div class="bg-slate-800/75 rounded-2xl p-3 border border-white/10 mb-4 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div>
+                    <div class="font-bold text-emerald-300">📱 ტელეფონის ეკრანის გაფართოება</div>
+                    <div class="text-[11px] text-slate-300">ამოატრიალე ტელეფონი ან დააჭირე სრულ ეკრანს</div>
+                </div>
+                <button id="menuFullscreenBtn" type="button" class="bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold px-3 py-2 rounded-xl border border-emerald-300/40 shadow cursor-pointer active:scale-95">
+                    ⛶ სრული ეკრანი
+                </button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex flex-col sm:flex-row gap-2">
+                <button id="startBtn" class="flex-1 bg-gradient-to-r from-rose-600 to-emerald-600 hover:from-rose-500 hover:to-emerald-500 text-white font-bold py-3 px-5 rounded-2xl shadow-lg transition transform active:scale-95 text-sm sm:text-base cursor-pointer">
+                    ⚔️ თამაშის დაწყება
+                </button>
+                <button id="regenBtn" class="bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold py-3 px-4 rounded-2xl border border-white/15 transition transform active:scale-95 text-xs sm:text-sm cursor-pointer">
+                    🔄 ახალი სამყარო (ძველი წაიშლება)
+                </button>
+            </div>
+            <div id="statsSummary" class="text-center text-[11px] text-slate-400 mt-2">
+                დამარცხებული ზომბები: 0 • დადებული ბლოკები: 0
+            </div>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ============================================================================
+         * 1. SOUND SYNTHESIZER (WEB AUDIO API)
+         * ============================================================================
+         */
+        class SoundManager {
+            constructor() {
+                this.ctx = null;
+                this.muted = false;
+            }
+
+            init() {
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    if (AudioContext) {
+                        this.ctx = new AudioContext();
+                    }
+                }
+                if (this.ctx && this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
+            }
+
+            toggleMute() {
+                this.muted = !this.muted;
+                return this.muted;
+            }
+
+            playGunshot(isLaser = false) {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                if (isLaser) {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(980, now);
+                    osc.frequency.exponentialRampToValueAtTime(160, now + 0.16);
+                } else {
+                    osc.type = 'square';
+                    osc.frequency.setValueAtTime(320, now);
+                    osc.frequency.exponentialRampToValueAtTime(55, now + 0.14);
+                }
+
+                gain.gain.setValueAtTime(0.32, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.16);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.17);
+            }
+
+            playBreak(blockType) {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const bufferSize = this.ctx.sampleRate * 0.12;
+                const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (bufferSize * 0.35));
+                }
+
+                const noise = this.ctx.createBufferSource();
+                noise.buffer = buffer;
+
+                const filter = this.ctx.createBiquadFilter();
+                filter.type = 'bandpass';
+                filter.frequency.value = blockType === 3 || blockType === 6 ? 950 : 650;
+                filter.Q.value = 1.4;
+
+                const gain = this.ctx.createGain();
+                gain.gain.setValueAtTime(0.32, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+
+                noise.connect(filter);
+                filter.connect(gain);
+                gain.connect(this.ctx.destination);
+                noise.start(now);
+            }
+
+            playPlace() {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(220, now);
+                osc.frequency.exponentialRampToValueAtTime(380, now + 0.065);
+
+                gain.gain.setValueAtTime(0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.075);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.08);
+            }
+
+            playStep() {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+
+                osc.type = 'triangle';
+                osc.frequency.setValueAtTime(95 + Math.random() * 25, now);
+                osc.frequency.exponentialRampToValueAtTime(45, now + 0.045);
+
+                gain.gain.setValueAtTime(0.07, now);
+                gain.gain.exponentialRampToValueAtTime(0.005, now + 0.05);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.055);
+            }
+
+            playZombieHit() {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(190, now);
+                osc.frequency.exponentialRampToValueAtTime(65, now + 0.16);
+
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.17);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.18);
+            }
+
+            playPlayerHurt() {
+                if (this.muted) return;
+                this.init();
+                if (!this.ctx) return;
+
+                const now = this.ctx.currentTime;
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(140, now);
+                osc.frequency.linearRampToValueAtTime(75, now + 0.22);
+
+                gain.gain.setValueAtTime(0.28, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.24);
+
+                osc.connect(gain);
+                gain.connect(this.ctx.destination);
+                osc.start(now);
+                osc.stop(now + 0.25);
+            }
+        }
+
+        /**
+         * ============================================================================
+         * 2. CHARACTER SKINS (ანდრია, ილია, იოანე, ლუკა, გაბრიელი) & 200-ITEM CATALOG
+         * ============================================================================
+         */
+        const PLAYER_SKINS = [
+            { id: 'andria', name: 'ანდრია', color: '#38BDF8', handHex: 0x38BDF8, emoji: '🧢' },
+            { id: 'ilia', name: 'ილია', color: '#10B981', handHex: 0x10B981, emoji: '🪖' },
+            { id: 'ioane', name: 'იოანე', color: '#F59E0B', handHex: 0xF59E0B, emoji: '👑' },
+            { id: 'luka', name: 'ლუკა', color: '#F43F5E', handHex: 0xF43F5E, emoji: '🎧' },
+            { id: 'gabrieli', name: 'გაბრიელი', color: '#A855F7', handHex: 0xA855F7, emoji: '🦸' }
+        ];
+
+        // Core block tile definitions in the texture atlas
+        const CORE_BLOCK_DEFS = {
+            1: { top: 0, side: 1, bottom: 2 },   // ბალახი
+            2: { top: 2, side: 2, bottom: 2 },   // მიწა
+            3: { top: 3, side: 3, bottom: 3 },   // ქვა
+            4: { top: 5, side: 4, bottom: 5 },   // ხის მორი
+            5: { top: 6, side: 6, bottom: 6 },   // ფიცარი
+            6: { top: 7, side: 7, bottom: 7 },   // აგური
+            7: { top: 8, side: 8, bottom: 8 },   // ქვიშა
+            8: { top: 9, side: 9, bottom: 9 },   // ფოთლები
+            9: { top: 10, side: 10, bottom: 10 },// წყალი
+            10: { top: 11, side: 11, bottom: 11 }, // 💡 ნათურა (Glowing Lamp)
+            11: { top: 12, side: 12, bottom: 12 }, // 🪟 ფანჯარა (Glass Window)
+            12: { top: 13, side: 13, bottom: 13 }  // 🚪 კარი (Door)
+        };
+
+        const WATER_ID = 9;
+        const LAMP_ID = 10;
+        const WINDOW_ID = 11;
+        const DOOR_ID = 12;
+
+        // Build exactly 200 distinct items in Georgian across categories
+        function generate200Items() {
+            const items = [];
+            let nextId = 1;
+
+            const addItem = (data) => {
+                if (items.length >= 200) return;
+                items.push({ id: nextId++, ...data });
+            };
+
+            // --- 1. SWORDS & GUNS (ხმლები და თოფები) ---
+            const weapons = [
+                { name: 'ალმასის ხმალი', shortName: 'ხმალი', category: 'weapons', kind: 'sword', damage: 3, color: '#38BDF8', icon: '⚔️' },
+                { name: 'ავტომატი AK-47', shortName: 'AK-47', category: 'weapons', kind: 'gun', damage: 2, bulletColor: 0xFBBF24, color: '#D97706', icon: '🔫' },
+                { name: 'პისტოლეტი', shortName: 'პისტოლეტი', category: 'weapons', kind: 'gun', damage: 1, bulletColor: 0xFDE047, color: '#94A3B8', icon: '🔫' },
+                { name: 'სანადირო თოფი', shortName: 'შოთგანი', category: 'weapons', kind: 'gun', damage: 3, bulletColor: 0xFB923C, color: '#B45309', icon: '🔫' },
+                { name: 'სნაიპერული შაშხანა', shortName: 'სნაიპერი', category: 'weapons', kind: 'gun', damage: 5, bulletColor: 0xEF4444, color: '#10B981', icon: '🎯' },
+                { name: 'ლაზერული თოფი', shortName: 'ლაზერი', category: 'weapons', kind: 'gun', damage: 4, isLaser: true, bulletColor: 0x22D3EE, color: '#06B6D4', icon: '⚡' },
+                { name: 'პლაზმური იარაღი', shortName: 'პლაზმა', category: 'weapons', kind: 'gun', damage: 5, isLaser: true, bulletColor: 0xC084FC, color: '#9333EA', icon: '🔮' },
+                { name: 'სარაკეტო გამშვები', shortName: 'ბაზუკა', category: 'weapons', kind: 'gun', damage: 8, bulletColor: 0xF43F5E, color: '#E11D48', icon: '🚀' },
+                { name: 'ცეცხლოვანი ხმალი', shortName: 'ცეცხ.ხმალი', category: 'weapons', kind: 'sword', damage: 5, color: '#F97316', icon: '🔥' },
+                { name: 'ნეზერიტის ხმალი', shortName: 'ნეზ.ხმალი', category: 'weapons', kind: 'sword', damage: 6, color: '#7C3AED', icon: '🗡️' },
+                { name: 'ოქროს ხმალი', shortName: 'ოქრ.ხმალი', category: 'weapons', kind: 'sword', damage: 3, color: '#FACC15', icon: '⚔️' },
+                { name: 'რკინის ხმალი', shortName: 'რკ.ხმალი', category: 'weapons', kind: 'sword', damage: 2, color: '#CBD5E1', icon: '🗡️' },
+                { name: 'ქვის ხმალი', shortName: 'ქვ.ხმალი', category: 'weapons', kind: 'sword', damage: 2, color: '#64748B', icon: '🗡️' },
+                { name: 'ხის ხმალი', shortName: 'ხის ხმალი', category: 'weapons', kind: 'sword', damage: 1, color: '#A16207', icon: '🗡️' },
+                { name: 'ლაზერული ხმალი', shortName: 'ლაზ.ხმალი', category: 'weapons', kind: 'sword', damage: 7, color: '#22C55E', icon: '⚔️' },
+                { name: 'არბალეტი', shortName: 'არბალეტი', category: 'weapons', kind: 'gun', damage: 3, bulletColor: 0xA3E635, color: '#65A30D', icon: '🏹' },
+                { name: 'მშვილდ-ისარი', shortName: 'მშვილდი', category: 'weapons', kind: 'gun', damage: 2, bulletColor: 0xFCD34D, color: '#B45309', icon: '🏹' },
+                { name: 'ტყვიამფრქვევი', shortName: 'მინიგანი', category: 'weapons', kind: 'gun', damage: 3, bulletColor: 0xFBBF24, color: '#475569', icon: '🔫' }
+            ];
+            weapons.forEach(w => addItem(w));
+
+            // --- 2. LAMPS, WINDOWS, DOORS (ნათურა, ფანჯარა, კარი) ---
+            const decorItems = [
+                { name: 'ნათურა', shortName: 'ნათურა', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#FDE047', icon: '💡' },
+                { name: 'ფანჯარა', shortName: 'ფანჯარა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#BAE6FD', icon: '🪟' },
+                { name: 'ხის კარი', shortName: 'კარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#92400E', icon: '🚪' },
+                { name: 'რკინის კარი', shortName: 'რკ.კარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#E2E8F0', icon: '🚪' },
+                { name: 'მანათობელი ქვა', shortName: 'მან.ქვა', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#FACC15', icon: '✨' },
+                { name: 'ჩირაღდანი', shortName: 'ჩირაღდანი', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#FB923C', icon: '🔥' },
+                { name: 'ზღვის ფანარი', shortName: 'ფანარი', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#67E8F9', icon: '🏮' },
+                { name: 'რედსტოუნ ნათურა', shortName: 'რედ.ნათურა', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#F87171', icon: '💡' },
+                { name: 'ლურჯი ფანჯარა', shortName: 'ლურჯ.მინა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#3B82F6', icon: '🪟' },
+                { name: 'წითელი ფანჯარა', shortName: 'წით.მინა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#EF4444', icon: '🪟' },
+                { name: 'მწვანე ფანჯარა', shortName: 'მწვ.მინა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#22C55E', icon: '🪟' },
+                { name: 'ყვითელი ფანჯარა', shortName: 'ყვით.მინა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#EAB308', icon: '🪟' },
+                { name: 'იისფერი ფანჯარა', shortName: 'იისფ.მინა', category: 'decor', kind: 'block', blockId: WINDOW_ID, color: '#A855F7', icon: '🪟' },
+                { name: 'მუხის კარი', shortName: 'მუხ.კარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#B45309', icon: '🚪' },
+                { name: 'არყის კარი', shortName: 'არყ.კარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#FDE68A', icon: '🚪' },
+                { name: 'მუქი კარი', shortName: 'მუქ.კარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#451A03', icon: '🚪' },
+                { name: 'ჭიშკარი', shortName: 'ჭიშკარი', category: 'decor', kind: 'block', blockId: DOOR_ID, color: '#78350F', icon: '🚧' },
+                { name: 'ჭაღი', shortName: 'ჭაღი', category: 'decor', kind: 'block', blockId: LAMP_ID, isLamp: true, color: '#FEF08A', icon: '🕯️' }
+            ];
+            decorItems.forEach(d => addItem(d));
+
+            // --- 3. CORE BUILDING BLOCKS ---
+            const baseBlocks = [
+                { name: 'ბალახი', shortName: 'ბალახი', category: 'blocks', kind: 'block', blockId: 1, color: '#4CAF50', icon: '🟩' },
+                { name: 'მიწა', shortName: 'მიწა', category: 'blocks', kind: 'block', blockId: 2, color: '#795548', icon: '🟫' },
+                { name: 'ქვა', shortName: 'ქვა', category: 'blocks', kind: 'block', blockId: 3, color: '#9E9E9E', icon: '🪨' },
+                { name: 'ხის მორი', shortName: 'ხის მორი', category: 'blocks', kind: 'block', blockId: 4, color: '#6D4C41', icon: '🪵' },
+                { name: 'ფიცარი', shortName: 'ფიცარი', category: 'blocks', kind: 'block', blockId: 5, color: '#D4A373', icon: ' planks' },
+                { name: 'აგური', shortName: 'აგური', category: 'blocks', kind: 'block', blockId: 6, color: '#B94A3E', icon: '🧱' },
+                { name: 'ქვიშა', shortName: 'ქვიშა', category: 'blocks', kind: 'block', blockId: 7, color: '#E3D196', icon: '🏖️' },
+                { name: 'ხის ფოთლები', shortName: 'ფოთლები', category: 'blocks', kind: 'block', blockId: 8, color: '#2E7D32', icon: '🍃' }
+            ];
+            baseBlocks.forEach(b => addItem(b));
+
+            // --- 4. COLORED WOOL, CONCRETE, TERRACOTTA, ORES & DECORATIVE BLOCKS ---
+            const georgianColors = [
+                { name: 'თეთრი', hex: '#F8FAFC' },
+                { name: 'ნარინჯისფერი', hex: '#F97316' },
+                { name: 'იასამნისფერი', hex: '#D946EF' },
+                { name: 'ცისფერი', hex: '#38BDF8' },
+                { name: 'ყვითელი', hex: '#FACC15' },
+                { name: 'ღია მწვანე', hex: '#84CC16' },
+                { name: 'ვარდისფერი', hex: '#F472B6' },
+                { name: 'ნაცრისფერი', hex: '#64748B' },
+                { name: 'ღია ნაცრისფერი', hex: '#CBD5E1' },
+                { name: 'ფირუზისფერი', hex: '#06B6D4' },
+                { name: 'იისფერი', hex: '#8B5CF6' },
+                { name: 'ლურჯი', hex: '#2563EB' },
+                { name: 'ყავისფერი', hex: '#78350F' },
+                { name: 'მწვანე', hex: '#16A34A' },
+                { name: 'წითელი', hex: '#DC2626' },
+                { name: 'შავი', hex: '#1E293B' }
+            ];
+
+            const blockMaterials = [
+                { suffix: 'მატყლი', shortSuffix: 'მატყლი', baseBlockId: 5, icon: '🧶' },
+                { suffix: 'ბეტონი', shortSuffix: 'ბეტონი', baseBlockId: 3, icon: '⬜' },
+                { suffix: 'ტერაკოტა', shortSuffix: 'ტერაკოტა', baseBlockId: 6, icon: '🟧' },
+                { suffix: 'ხალიჩა', shortSuffix: 'ხალიჩა', baseBlockId: 5, icon: '🟥' },
+                { suffix: 'კერამიკა', shortSuffix: 'კერამიკა', baseBlockId: 6, icon: '💠' }
+            ];
+
+            blockMaterials.forEach(mat => {
+                georgianColors.forEach(col => {
+                    addItem({
+                        name: `${col.name} ${mat.suffix}`,
+                        shortName: `${col.name.slice(0, 5)}.${mat.shortSuffix.slice(0, 4)}`,
+                        category: 'blocks',
+                        kind: 'block',
+                        blockId: mat.baseBlockId,
+                        color: col.hex,
+                        icon: mat.icon
+                    });
+                });
+            });
+
+            // --- 5. ORES, MINERALS & SPECIAL BLOCKS ---
+            const specialBlocks = [
+                'რიყის ქვა', 'ხავსიანი ქვა', 'გრანიტი', 'დიორიტი', 'ანდეზიტი', 'ბაზალტი', 'ობსიდიანი',
+                'ნახშირის მადანი', 'რკინის მადანი', 'ოქროს მადანი', 'ალმასის მადანი', 'ზურმუხტის მადანი',
+                'ლაპისის მადანი', 'რედსტოუნის მადანი', 'კვარცის მადანი', 'ნეზერიტის ბლოკი',
+                'ალმასის ბლოკი', 'ოქროს ბლოკი', 'რკინის ბლოკი', 'ზურმუხტის ბლოკი', 'ლაპისის ბლოკი',
+                'წიგნების თარო', 'სამუშაო მაგიდა', 'ღუმელი', 'სკივრი', 'დინამიტი TNT', 'თოვლის ბლოკი',
+                'ყინულის ბლოკი', 'ლურჯი ყინული', 'თიხის ბლოკი', 'გოგრის ბლოკი', 'საზამთროს ბლოკი',
+                'თივის ზვინი', 'კაქტუსი', 'ღრუბელი', 'მარჯნის ბლოკი', 'პრიზმარინი', 'ენდერის ქვა'
+            ];
+
+            specialBlocks.forEach((sbName, idx) => {
+                const palette = ['#64748B', '#38BDF8', '#FACC15', '#10B981', '#EF4444', '#A855F7', '#D97706'];
+                addItem({
+                    name: sbName,
+                    shortName: sbName.split(' ')[0],
+                    category: 'blocks',
+                    kind: 'block',
+                    blockId: (idx % 6) + 2,
+                    color: palette[idx % palette.length],
+                    icon: '📦'
+                });
+            });
+
+            // --- 6. TOOLS, ARMOR & FOOD ITEMS (Fill up to exact 200 items) ---
+            const toolsAndFood = [
+                { name: 'ალმასის წერაქვი', icon: '⛏️', color: '#38BDF8' },
+                { name: 'რკინის წერაქვი', icon: '⛏️', color: '#CBD5E1' },
+                { name: 'ოქროს წერაქვი', icon: '⛏️', color: '#FACC15' },
+                { name: 'ნეზერიტის წერაქვი', icon: '⛏️', color: '#7C3AED' },
+                { name: 'ალმასის ნაჯახი', icon: '🪓', color: '#38BDF8' },
+                { name: 'რკინის ნაჯახი', icon: '🪓', color: '#CBD5E1' },
+                { name: 'ოქროს ნაჯახი', icon: '🪓', color: '#FACC15' },
+                { name: 'ალმასის ნიჩაბი', icon: '🥄', color: '#38BDF8' },
+                { name: 'რკინის ნიჩაბი', icon: '🥄', color: '#CBD5E1' },
+                { name: 'ალმასის თოხი', icon: '🌾', color: '#38BDF8' },
+                { name: 'ფარი', icon: '🛡️', color: '#92400E' },
+                { name: 'ალმასის ჩაფხუტი', icon: '🪖', color: '#38BDF8' },
+                { name: 'ალმასის ჯავშანი', icon: '🦺', color: '#38BDF8' },
+                { name: 'ალმასის შარვალი', icon: '👖', color: '#38BDF8' },
+                { name: 'ალმასის ჩექმები', icon: '🥾', color: '#38BDF8' },
+                { name: 'რკინის ჩაფხუტი', icon: '🪖', color: '#CBD5E1' },
+                { name: 'რკინის ჯავშანი', icon: '🦺', color: '#CBD5E1' },
+                { name: 'ოქროს გვირგვინი', icon: '👑', color: '#FACC15' },
+                { name: 'წითელი ვაშლი', icon: '🍎', color: '#EF4444' },
+                { name: 'ოქროს ვაშლი', icon: '🍏', color: '#FACC15' },
+                { name: 'პური', icon: '🍞', color: '#D97706' },
+                { name: 'შემწვარი ხორცი', icon: '🥩', color: '#B91C1C' },
+                { name: 'საზამთროს ნაჭერი', icon: '🍉', color: '#22C55E' },
+                { name: 'სტაფილო', icon: '🥕', color: '#F97316' },
+                { name: 'ოქროს სტაფილო', icon: '🥕', color: '#FACC15' },
+                { name: 'ნამცხვარი', icon: '🎂', color: '#F472B6' },
+                { name: 'თაფლის ბოთლი', icon: '🍯', color: '#F59E0B' },
+                { name: 'სიცოცხლის ელექსირი', icon: '🧪', color: '#F43F5E' },
+                { name: 'სიჩქარის ელექსირი', icon: '🧪', color: '#38BDF8' },
+                { name: 'კომპასი', icon: '🧭', color: '#EF4444' },
+                { name: 'საათი', icon: '⏰', color: '#FACC15' },
+                { name: 'რუკა', icon: '🗺️', color: '#E2E8F0' },
+                { name: 'ჭოგრიტი', icon: '🔭', color: '#D97706' },
+                { name: 'წყლის ვედრო', icon: '🪣', color: '#3B82F6' },
+                { name: 'ლავის ვედრო', icon: '🪣', color: '#F97316' },
+                { name: 'რძის ვედრო', icon: '🪣', color: '#F8FAFC' },
+                { name: 'ანკესი', icon: '🎣', color: '#A16207' },
+                { name: 'ასანთი', icon: '🔥', color: '#FB923C' },
+                { name: 'მაკრატელი', icon: '✂️', color: '#94A3B8' },
+                { name: 'ალმასი', icon: '💎', color: '#38BDF8' },
+                { name: 'ზურმუხტი', icon: '❇️', color: '#10B981' },
+                { name: 'ოქროს ზოდი', icon: '🪙', color: '#FACC15' },
+                { name: 'რკინის ზოდი', icon: '🔩', color: '#CBD5E1' },
+                { name: 'წითელი საწოლი', icon: '🛏️', color: '#EF4444' },
+                { name: 'ლურჯი საწოლი', icon: '🛏️', color: '#3B82F6' },
+                { name: 'მწვანე საწოლი', icon: '🛏️', color: '#22C55E' },
+                { name: 'ნავი', icon: '🛶', color: '#92400E' },
+                { name: 'ვაგონი', icon: '🛒', color: '#64748B' }
+            ];
+
+            toolsAndFood.forEach(tf => {
+                addItem({
+                    name: tf.name,
+                    shortName: tf.name.split(' ')[0],
+                    category: 'tools',
+                    kind: 'tool',
+                    color: tf.color,
+                    icon: tf.icon
+                });
+            });
+
+            // Ensure exact count of 200 items
+            while (items.length < 200) {
+                const idx = items.length + 1;
+                addItem({
+                    name: `სპეც-ბლოკი #${idx}`,
+                    shortName: `ბლოკი #${idx}`,
+                    category: 'blocks',
+                    kind: 'block',
+                    blockId: (idx % 6) + 1,
+                    color: '#38BDF8',
+                    icon: '🔷'
+                });
+            }
+
+            return items.slice(0, 200);
+        }
+
+        const ALL_200_ITEMS = generate200Items();
+
+        const EXTRA_BLOCK_NAMES = {
+            1: 'ბალახი',
+            2: 'მიწა',
+            3: 'ქვა',
+            4: 'ხის მორი',
+            5: 'ფიცარი',
+            6: 'აგური',
+            7: 'ქვიშა',
+            8: 'ხის ფოთლები',
+            9: 'წყალი',
+            10: '💡 ნათურა',
+            11: '🪟 ფანჯარა',
+            12: '🚪 კარი'
+        };
+
+        function createTextureAtlas() {
+            const tileSize = 16;
+            const gridCols = 4;
+            const canvas = document.createElement('canvas');
+            canvas.width = tileSize * gridCols;
+            canvas.height = tileSize * gridCols;
+            const ctx = canvas.getContext('2d');
+
+            let seed = 1337;
+            const rand = () => {
+                seed = (seed * 16807) % 2147483647;
+                return (seed - 1) / 2147483646;
+            };
+
+            const drawTile = (index, drawFn) => {
+                const gx = (index % gridCols) * tileSize;
+                const gy = Math.floor(index / gridCols) * tileSize;
+                drawFn(ctx, gx, gy, tileSize, rand);
+            };
+
+            // 0: Grass Top
+            drawTile(0, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const v = r();
+                        c.fillStyle = v > 0.65 ? '#58B947' : (v > 0.25 ? '#48A83B' : '#3B9130');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 1: Grass Side
+            drawTile(1, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const grassDepth = 3 + ((x * 7 + 3) % 3);
+                        if (y < grassDepth) {
+                            c.fillStyle = r() > 0.4 ? '#4CAF50' : '#3E9642';
+                        } else {
+                            const v = r();
+                            c.fillStyle = v > 0.7 ? '#8A6240' : (v > 0.2 ? '#734F32' : '#5E3F26');
+                        }
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 2: Dirt
+            drawTile(2, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const v = r();
+                        c.fillStyle = v > 0.72 ? '#8D6543' : (v > 0.22 ? '#755134' : '#5C3E26');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 3: Stone
+            drawTile(3, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const v = r();
+                        const streak = ((x + y * 2) % 5 === 0) ? -0.15 : 0;
+                        const val = v + streak;
+                        c.fillStyle = val > 0.65 ? '#9AA3AB' : (val > 0.25 ? '#818A91' : '#687077');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 4: Wood Log Side
+            drawTile(4, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const ridge = x % 3 === 0;
+                        const v = r();
+                        c.fillStyle = ridge ? (v > 0.5 ? '#4E342E' : '#3E2723') : (v > 0.5 ? '#6D4C41' : '#5D4037');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 5: Wood Log Top
+            drawTile(5, (c, ox, oy, s) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const dist = Math.max(Math.abs(x - 7.5), Math.abs(y - 7.5));
+                        if (dist > 6.2) c.fillStyle = '#4E342E';
+                        else if (Math.floor(dist) % 2 === 0) c.fillStyle = '#C8A165';
+                        else c.fillStyle = '#A67C46';
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 6: Planks
+            drawTile(6, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const isH = (y % 4 === 0);
+                        const row = Math.floor(y / 4);
+                        const isV = ((x + row * 8) % 16 === 0);
+                        c.fillStyle = (isH || isV) ? '#7C5832' : (r() > 0.5 ? '#CFA670' : '#BE935B');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 7: Brick
+            drawTile(7, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const row = Math.floor(y / 4);
+                        const mY = (y % 4 === 0);
+                        const mX = ((x + (row % 2) * 4) % 8 === 0);
+                        c.fillStyle = (mY || mX) ? '#CFCBC4' : (r() > 0.5 ? '#B94A3E' : '#A33B30');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 8: Sand
+            drawTile(8, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const v = r();
+                        c.fillStyle = v > 0.65 ? '#EFE0AD' : (v > 0.25 ? '#E3D196' : '#D4C082');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 9: Leaves
+            drawTile(9, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const v = r();
+                        c.fillStyle = v > 0.68 ? '#388E3C' : (v > 0.25 ? '#2B7A30' : '#1B5E20');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 10: Water
+            drawTile(10, (c, ox, oy, s, r) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const wave = ((x + y) % 4 === 0);
+                        c.fillStyle = wave ? '#4FC3F7' : (r() > 0.4 ? '#29B6F6' : '#039BE5');
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 11: 💡 Glowing Lamp (ნათურა)
+            drawTile(11, (c, ox, oy, s) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const border = (x === 0 || y === 0 || x === s - 1 || y === s - 1);
+                        const dist = Math.hypot(x - 7.5, y - 7.5);
+                        if (border) c.fillStyle = '#B45309';
+                        else if (dist < 4.5) c.fillStyle = '#FEF9C3';
+                        else c.fillStyle = '#FACC15';
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 12: 🪟 Window Glass (ფანჯარა)
+            drawTile(12, (c, ox, oy, s) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const frame = (x === 0 || y === 0 || x === s - 1 || y === s - 1 || x === 8 || y === 8);
+                        const glare = ((x + y === 5) || (x + y === 6));
+                        if (frame) c.fillStyle = '#E2E8F0';
+                        else if (glare) c.fillStyle = '#FFFFFF';
+                        else c.fillStyle = '#7DD3FC';
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            // 13: 🚪 Wooden Door (კარი)
+            drawTile(13, (c, ox, oy, s) => {
+                for (let y = 0; y < s; y++) {
+                    for (let x = 0; x < s; x++) {
+                        const border = (x < 2 || x > 13 || y < 2 || y > 13);
+                        const windowHole = (y >= 3 && y <= 6 && ((x >= 4 && x <= 6) || (x >= 9 && x <= 11)));
+                        const handle = (x === 12 && y === 9);
+                        if (handle) c.fillStyle = '#FACC15';
+                        else if (windowHole) c.fillStyle = '#BAE6FD';
+                        else if (border) c.fillStyle = '#5C3A21';
+                        else c.fillStyle = '#92400E';
+                        c.fillRect(ox + x, oy + y, 1, 1);
+                    }
+                }
+            });
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.magFilter = THREE.NearestFilter;
+            texture.minFilter = THREE.NearestFilter;
+            texture.generateMipmaps = false;
+
+            return { texture, gridCols };
+        }
+
+        /**
+         * ============================================================================
+         * 3. HUGE EXPANDED PROCEDURAL VOXEL WORLD (256x36x256 + DYNAMIC CHUNK STREAMING)
+         * ============================================================================
+         */
+        class VoxelWorld {
+            constructor(sizeX = 256, sizeY = 36, sizeZ = 256, seed = Math.random() * 10000) {
+                this.sizeX = sizeX;
+                this.sizeY = sizeY;
+                this.sizeZ = sizeZ;
+                this.seed = seed;
+                this.chunkSize = 16;
+                this.generatedColumns = new Set();
+                this.modifiedBlocks = new Map();
+                this.playerEdits = new Map();
+                this.generating = false;
+                this.chunkMeshes = new Map();
+            }
+
+            key3D(x, y, z) {
+                return `${x},${y},${z}`;
+            }
+
+            inBounds(x, y, z) {
+                return x >= 0 && x < this.sizeX && y >= 0 && y < this.sizeY && z >= 0 && z < this.sizeZ;
+            }
+
+            hash2D(ix, iz) {
+                const n = Math.sin(ix * 127.1 + iz * 311.7 + this.seed * 74.7) * 43758.5453123;
+                return n - Math.floor(n);
+            }
+
+            noise2D(x, z) {
+                const ix = Math.floor(x);
+                const iz = Math.floor(z);
+                const fx = x - ix;
+                const fz = z - iz;
+                const ux = fx * fx * (3 - 2 * fx);
+                const uz = fz * fz * (3 - 2 * fz);
+
+                const a = this.hash2D(ix, iz);
+                const b = this.hash2D(ix + 1, iz);
+                const c = this.hash2D(ix, iz + 1);
+                const d = this.hash2D(ix + 1, iz + 1);
+
+                return a * (1 - ux) * (1 - uz) +
+                       b * ux * (1 - uz) +
+                       c * (1 - ux) * uz +
+                       d * ux * uz;
+            }
+
+            fbm(x, z) {
+                let value = 0;
+                let amp = 0.5;
+                let freq = 0.025;
+                for (let i = 0; i < 4; i++) {
+                    value += amp * this.noise2D(x * freq, z * freq);
+                    freq *= 2.05;
+                    amp *= 0.5;
+                }
+                return value;
+            }
+
+            getTerrainHeight(x, z) {
+                const n = this.fbm(x, z);
+                return Math.floor(6 + n * 18);
+            }
+
+            getBlock(x, y, z) {
+                if (!this.inBounds(x, y, z)) return 0;
+                const mod = this.modifiedBlocks.get(this.key3D(x, y, z));
+                if (mod !== undefined) return mod;
+
+                const waterLevel = 10;
+                const height = this.getTerrainHeight(x, z);
+
+                if (y === 0) return 3;
+                if (y < height - 3) return 3;
+                if (y < height) return height <= waterLevel + 1 ? 7 : 2;
+                if (y === height) return height <= waterLevel + 1 ? 7 : 1;
+                if (y <= waterLevel) return WATER_ID;
+                return 0;
+            }
+
+            setBlock(x, y, z, id) {
+                if (!this.inBounds(x, y, z)) return false;
+                const key = this.key3D(x, y, z);
+                if (this.generating) {
+                    if (this.playerEdits.has(key)) return false;
+                } else {
+                    this.playerEdits.set(key, id);
+                }
+                this.modifiedBlocks.set(key, id);
+                return true;
+            }
+
+            ensureTreesForChunk(cx, cz) {
+                const colKey = `${cx},${cz}`;
+                if (this.generatedColumns.has(colKey)) return;
+                this.generatedColumns.add(colKey);
+
+                const waterLevel = 10;
+                const startX = cx * this.chunkSize + 2;
+                const endX = Math.min((cx + 1) * this.chunkSize - 2, this.sizeX - 3);
+                const startZ = cz * this.chunkSize + 2;
+                const endZ = Math.min((cz + 1) * this.chunkSize - 2, this.sizeZ - 3);
+
+                for (let x = startX; x <= endX; x += 4) {
+                    for (let z = startZ; z <= endZ; z += 4) {
+                        if (this.hash2D(x * 1.7, z * 2.3) > 0.80) {
+                            const h = this.getTerrainHeight(x, z);
+                            if (h > waterLevel + 1 && this.getBlock(x, h, z) === 1) {
+                                this.plantTree(x, h + 1, z);
+                            }
+                        }
+                    }
+                }
+            }
+
+            plantTree(tx, ty, tz) {
+                this.generating = true;
+                const trunkHeight = 4 + Math.floor(this.hash2D(tx, tz) * 2);
+                for (let ly = ty + trunkHeight - 2; ly <= ty + trunkHeight + 1; ly++) {
+                    const radius = (ly === ty + trunkHeight + 1) ? 1 : 2;
+                    for (let lx = tx - radius; lx <= tx + radius; lx++) {
+                        for (let lz = tz - radius; lz <= tz + radius; lz++) {
+                            if (Math.abs(lx - tx) === radius && Math.abs(lz - tz) === radius && ly === ty + trunkHeight + 1) continue;
+                            if (this.getBlock(lx, ly, lz) === 0) {
+                                this.setBlock(lx, ly, lz, 8);
+                            }
+                        }
+                    }
+                }
+                for (let i = 0; i < trunkHeight; i++) {
+                    this.setBlock(tx, ty + i, tz, 4);
+                }
+                this.generating = false;
+            }
+
+            buildChunkGeometry(cx, cz, gridCols) {
+                this.ensureTreesForChunk(cx, cz);
+
+                const positions = [];
+                const normals = [];
+                const uvs = [];
+                const colors = [];
+
+                const startX = cx * this.chunkSize;
+                const endX = Math.min(startX + this.chunkSize, this.sizeX);
+                const startZ = cz * this.chunkSize;
+                const endZ = Math.min(startZ + this.chunkSize, this.sizeZ);
+
+                const faces = [
+                    { dir: [1, 0, 0], corners: [[1,0,1], [1,0,0], [1,1,0], [1,1,1]], faceType: 'side', shade: 0.84 },
+                    { dir: [-1, 0, 0], corners: [[0,0,0], [0,0,1], [0,1,1], [0,1,0]], faceType: 'side', shade: 0.84 },
+                    { dir: [0, 1, 0], corners: [[0,1,1], [1,1,1], [1,1,0], [0,1,0]], faceType: 'top', shade: 1.0 },
+                    { dir: [0, -1, 0], corners: [[0,0,0], [1,0,0], [1,0,1], [0,0,1]], faceType: 'bottom', shade: 0.58 },
+                    { dir: [0, 0, 1], corners: [[0,0,1], [1,0,1], [1,1,1], [0,1,1]], faceType: 'side', shade: 0.92 },
+                    { dir: [0, 0, -1], corners: [[1,0,0], [0,0,0], [0,1,0], [1,1,0]], faceType: 'side', shade: 0.92 }
+                ];
+
+                const pad = 0.002;
+                const tileSpan = 1 / gridCols;
+
+                for (let y = 0; y < this.sizeY; y++) {
+                    for (let z = startZ; z < endZ; z++) {
+                        for (let x = startX; x < endX; x++) {
+                            const blockId = this.getBlock(x, y, z);
+                            if (blockId === 0) continue;
+
+                            const blockDef = CORE_BLOCK_DEFS[blockId];
+                            if (!blockDef) continue;
+
+                            for (let f = 0; f < 6; f++) {
+                                const face = faces[f];
+                                const nx = x + face.dir[0];
+                                const ny = y + face.dir[1];
+                                const nz = z + face.dir[2];
+                                const neighbor = this.getBlock(nx, ny, nz);
+
+                                // Windows (11) and Water (9) allow seeing adjacent blocks through them
+                                const isNeighborOpaque = neighbor !== 0 && neighbor !== WATER_ID && neighbor !== WINDOW_ID;
+                                if (isNeighborOpaque) continue;
+                                if (blockId === WATER_ID && neighbor === WATER_ID) continue;
+                                if (blockId === WINDOW_ID && neighbor === WINDOW_ID) continue;
+
+                                const tileIdx = blockDef[face.faceType];
+                                const tx = (tileIdx % gridCols) * tileSpan;
+                                const ty = 1 - (Math.floor(tileIdx / gridCols) + 1) * tileSpan;
+
+                                const u0 = tx + pad;
+                                const u1 = tx + tileSpan - pad;
+                                const v0 = ty + pad;
+                                const v1 = ty + tileSpan - pad;
+
+                                const tileUVs = [
+                                    [u0, v0],
+                                    [u1, v0],
+                                    [u1, v1],
+                                    [u0, v1]
+                                ];
+
+                                const waterOffset = (blockId === WATER_ID) ? -0.12 : 0;
+                                // Lamps (10) glow extra bright!
+                                const shadeBoost = (blockId === LAMP_ID) ? 1.55 : face.shade;
+
+                                const triIndices = [0, 1, 2, 0, 2, 3];
+                                for (let idx of triIndices) {
+                                    const c = face.corners[idx];
+                                    const yPos = y + c[1] + (c[1] === 1 ? waterOffset : 0);
+                                    positions.push(x + c[0], yPos, z + c[2]);
+                                    normals.push(face.dir[0], face.dir[1], face.dir[2]);
+                                    uvs.push(tileUVs[idx][0], tileUVs[idx][1]);
+                                    colors.push(shadeBoost, shadeBoost, shadeBoost);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+                geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                geometry.computeBoundingSphere();
+                return geometry;
+            }
+        }
+
+        /**
+         * ============================================================================
+         * 4. 3D VOXEL ZOMBIE ENTITY SYSTEM
+         * ============================================================================
+         */
+        class ZombieEntity {
+            constructor(scene, x, y, z) {
+                this.scene = scene;
+                this.pos = new THREE.Vector3(x, y, z);
+                this.vel = new THREE.Vector3(0, 0, 0);
+                this.hp = 4;
+                this.maxHp = 4;
+                this.radius = 0.35;
+                this.height = 1.75;
+                this.onGround = false;
+                this.hurtTimer = 0;
+                this.attackCooldown = 0;
+                this.walkCycle = Math.random() * Math.PI * 2;
+
+                this.group = new THREE.Group();
+                this.materials = [];
+
+                const makeMat = (colorHex) => {
+                    const m = new THREE.MeshLambertMaterial({ color: colorHex });
+                    this.materials.push(m);
+                    return m;
+                };
+
+                const skinMat = makeMat(0x4E9A51);
+                const shirtMat = makeMat(0x2B8CBE);
+                const pantsMat = makeMat(0x3B4990);
+                const eyeMat = makeMat(0x111827);
+
+                const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.72, 0.28), shirtMat);
+                torso.position.y = 1.02;
+                this.group.add(torso);
+
+                const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.48, 0.48), skinMat);
+                head.position.y = 1.62;
+                this.group.add(head);
+
+                const leftEye = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.04), eyeMat);
+                leftEye.position.set(-0.11, 1.64, 0.23);
+                const rightEye = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.06, 0.04), eyeMat);
+                rightEye.position.set(0.11, 1.64, 0.23);
+                this.group.add(leftEye, rightEye);
+
+                this.leftArm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.65), skinMat);
+                this.leftArm.position.set(-0.39, 1.24, 0.25);
+                this.rightArm = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.65), skinMat);
+                this.rightArm.position.set(0.39, 1.24, 0.25);
+                this.group.add(this.leftArm, this.rightArm);
+
+                this.leftLeg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.66, 0.24), pantsMat);
+                this.leftLeg.position.set(-0.14, 0.33, 0);
+                this.rightLeg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.66, 0.24), pantsMat);
+                this.rightLeg.position.set(0.14, 0.33, 0);
+                this.group.add(this.leftLeg, this.rightLeg);
+
+                this.group.position.copy(this.pos);
+                this.scene.add(this.group);
+            }
+
+            takeDamage(amount, knockbackDir) {
+                this.hp -= amount;
+                this.hurtTimer = 0.22;
+                this.vel.x = knockbackDir.x * 7.5;
+                this.vel.z = knockbackDir.z * 7.5;
+                this.vel.y = 4.6;
+                this.onGround = false;
+
+                this.materials.forEach(m => m.emissive.setHex(0xaa1111));
+            }
+
+            destroy() {
+                this.scene.remove(this.group);
+            }
+        }
+
+        /**
+         * ============================================================================
+         * 5. MAIN GAME ENGINE & CONTROLLER
+         * ============================================================================
+         */
+        class MinecraftGame {
+            constructor() {
+                this.canvas = document.getElementById('gameCanvas');
+                this.sound = new SoundManager();
+
+                this.stats = {
+                    zombiesDefeated: parseInt(localStorage.getItem('mc_zombies') || '0', 10),
+                    blocksPlaced: parseInt(localStorage.getItem('mc_placed') || '0', 10)
+                };
+
+                this.selectedSkin = PLAYER_SKINS[0];
+                this.gameMode = 'zombie';
+                this.isNight = true;
+
+                // Three.js Scene Setup
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 220);
+                this.camera.rotation.order = 'YXZ';
+                this.scene.add(this.camera);
+
+                this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, powerPreference: 'high-performance' });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+                // Lighting
+                this.ambientLight = new THREE.AmbientLight(0x9bb0d8, 0.58);
+                this.scene.add(this.ambientLight);
+
+                this.sunLight = new THREE.DirectionalLight(0xcfe0ff, 0.55);
+                this.sunLight.position.set(50, 90, 40);
+                this.scene.add(this.sunLight);
+
+                const celestialGeo = new THREE.BoxGeometry(9, 9, 9);
+                this.celestialMat = new THREE.MeshBasicMaterial({ color: 0xE2E8F0, fog: false });
+                const celestialMesh = new THREE.Mesh(celestialGeo, this.celestialMat);
+                celestialMesh.position.set(75, 115, 60);
+                this.scene.add(celestialMesh);
+
+                // First-Person Held Weapon / Hand Mesh attached to Camera
+                this.initFirstPersonHand();
+
+                this.applyAtmosphere();
+
+                // Textures & World Material
+                const atlas = createTextureAtlas();
+                this.gridCols = atlas.gridCols;
+
+                this.worldMaterial = new THREE.MeshLambertMaterial({
+                    map: atlas.texture,
+                    vertexColors: true
+                });
+
+                // Block Selection Wireframe Highlight
+                const boxGeo = new THREE.BoxGeometry(1.006, 1.006, 1.006);
+                const edges = new THREE.EdgesGeometry(boxGeo);
+                this.highlightMesh = new THREE.LineSegments(
+                    edges,
+                    new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 })
+                );
+                this.highlightMesh.visible = false;
+                this.scene.add(this.highlightMesh);
+
+                // Player State
+                this.player = {
+                    pos: new THREE.Vector3(128, 26, 128),
+                    vel: new THREE.Vector3(0, 0, 0),
+                    radius: 0.32,
+                    height: 1.72,
+                    eyeHeight: 1.56,
+                    onGround: false,
+                    flying: false,
+                    yaw: 0,
+                    pitch: -0.2,
+                    stepTimer: 0,
+                    hp: 5,
+                    maxHp: 5,
+                    invulnTimer: 0
+                };
+
+                // Zombies, Projectiles (Bullets/Lasers) & Placed Lamp Lights
+                this.zombies = [];
+                this.projectiles = [];
+                this.lampLights = [];
+                this.zombieSpawnTimer = 0;
+                this.swingTimer = 0;
+
+                // 8-Slot Mobile Hotbar populated with top iconic items (Sword, AK-47, Lamp, Window, Door, Grass, Stone, Planks)
+                this.hotbarItems = [
+                    ALL_200_ITEMS[0],  // ალმასის ხმალი
+                    ALL_200_ITEMS[1],  // ავტომატი AK-47
+                    ALL_200_ITEMS[18], // 💡 ნათურა
+                    ALL_200_ITEMS[19], // 🪟 ფანჯარა
+                    ALL_200_ITEMS[20], // 🚪 ხის კარი
+                    ALL_200_ITEMS[36], // ბალახი
+                    ALL_200_ITEMS[38], // ქვა
+                    ALL_200_ITEMS[40]  // ფიცარი
+                ];
+                this.selectedSlot = 0;
+
+                // Input & Touch State
+                this.keys = {};
+                this.touchMove = { x: 0, y: 0 };
+                this.lastSpaceTime = 0;
+                this.isLocked = false;
+                this.isPlaying = false;
+                this.isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+                this.targetedBlock = null;
+                this.targetedZombie = null;
+
+                this.lastPlayerChunkX = null;
+                this.lastPlayerChunkZ = null;
+                this.renderDistanceChunks = 4;
+
+                this.lastFpsUpdate = performance.now();
+                this.lastFrameTime = performance.now();
+
+                this.initSkinUI();
+                this.initHotbarUI();
+                this.initBackpackUI();
+                this.updateStatsUI();
+                this.bindEvents();
+                this.checkOrientationBanner();
+                try {
+                    const lm = localStorage.getItem('mc3d_last_mode');
+                    if (lm === 'peaceful' || lm === 'zombie') this.setGameMode(lm);
+                } catch (e) {}
+                this.createNewWorld();
+            }
+
+            initFirstPersonHand() {
+                this.handGroup = new THREE.Group();
+                this.handGroup.position.set(0.36, -0.32, -0.55);
+
+                // Character sleeve/arm colored by active skin
+                this.armMat = new THREE.MeshLambertMaterial({ color: this.selectedSkin.handHex });
+                this.armMesh = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.14, 0.42), this.armMat);
+                this.handGroup.add(this.armMesh);
+
+                // Sword blade mesh
+                this.swordMat = new THREE.MeshLambertMaterial({ color: 0x38BDF8 });
+                this.swordMesh = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.48, 0.08), this.swordMat);
+                this.swordMesh.position.set(0, 0.22, -0.16);
+                this.swordMesh.rotation.x = 0.25;
+                this.handGroup.add(this.swordMesh);
+
+                // Gun barrel mesh
+                this.gunMat = new THREE.MeshLambertMaterial({ color: 0x334155 });
+                this.gunMesh = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.13, 0.46), this.gunMat);
+                this.gunMesh.position.set(0, 0.08, -0.18);
+                this.gunMesh.visible = false;
+                this.handGroup.add(this.gunMesh);
+
+                this.camera.add(this.handGroup);
+            }
+
+            updateHeldVisual() {
+                const item = this.hotbarItems[this.selectedSlot];
+                this.armMat.color.setHex(this.selectedSkin.handHex);
+
+                if (item.kind === 'sword') {
+                    this.swordMesh.visible = true;
+                    this.gunMesh.visible = false;
+                    this.swordMat.color.set(item.color || '#38BDF8');
+                } else if (item.kind === 'gun') {
+                    this.swordMesh.visible = false;
+                    this.gunMesh.visible = true;
+                    this.gunMat.color.set(item.color || '#334155');
+                } else {
+                    this.swordMesh.visible = false;
+                    this.gunMesh.visible = false;
+                }
+            }
+
+            initSkinUI() {
+                const container = document.getElementById('skinSelector');
+                container.innerHTML = '';
+
+                PLAYER_SKINS.forEach(skin => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    const isSelected = skin.id === this.selectedSkin.id;
+                    btn.className = `p-2 rounded-2xl border-2 flex flex-col items-center justify-center transition cursor-pointer ${
+                        isSelected
+                            ? 'border-indigo-400 bg-indigo-500/30 shadow-lg scale-105'
+                            : 'border-slate-700 bg-slate-800/70 hover:border-slate-500'
+                    }`;
+                    btn.innerHTML = `
+                        <span class="text-xl sm:text-2xl">${skin.emoji}</span>
+                        <span class="text-[11px] sm:text-xs font-extrabold mt-0.5" style="color: ${skin.color}">${skin.name}</span>
+                    `;
+                    btn.addEventListener('click', () => {
+                        this.selectedSkin = skin;
+                        document.getElementById('skinBadge').textContent = `${skin.emoji} ${skin.name}`;
+                        this.updateHeldVisual();
+                        this.initSkinUI();
+                    });
+                    container.appendChild(btn);
+                });
+            }
+
+            applyAtmosphere() {
+                if (this.isNight) {
+                    this.scene.background = new THREE.Color(0x0f172a);
+                    this.scene.fog = new THREE.FogExp2(0x0f172a, 0.016);
+                    this.ambientLight.color.setHex(0x7c93c3);
+                    this.ambientLight.intensity = 0.58;
+                    this.sunLight.color.setHex(0xb8d0ff);
+                    this.sunLight.intensity = 0.48;
+                    this.celestialMat.color.setHex(0xF8FAFC);
+                    document.getElementById('timeIcon').textContent = '🌙';
+                } else {
+                    this.scene.background = new THREE.Color(0x82C8F8);
+                    this.scene.fog = new THREE.FogExp2(0x82C8F8, 0.013);
+                    this.ambientLight.color.setHex(0xffffff);
+                    this.ambientLight.intensity = 0.76;
+                    this.sunLight.color.setHex(0xfff8e7);
+                    this.sunLight.intensity = 0.68;
+                    this.celestialMat.color.setHex(0xFFF59D);
+                    document.getElementById('timeIcon').textContent = '☀️';
+                }
+            }
+
+            updateStatsUI() {
+                document.getElementById('zombieKillsDisplay').textContent = this.stats.zombiesDefeated;
+                document.getElementById('statsSummary').textContent =
+                    `დამარცხებული ზომბები: ${this.stats.zombiesDefeated} • დადებული ბლოკები: ${this.stats.blocksPlaced}`;
+
+                let hearts = '';
+                for (let i = 0; i < this.player.maxHp; i++) {
+                    hearts += i < this.player.hp ? '❤️' : '🖤';
+                }
+                document.getElementById('heartsDisplay').textContent = hearts;
+            }
+
+            saveStats() {
+                localStorage.setItem('mc_zombies', String(this.stats.zombiesDefeated));
+                localStorage.setItem('mc_placed', String(this.stats.blocksPlaced));
+                this.updateStatsUI();
+            }
+
+            saveKey() {
+                return 'mc3d_save_' + this.gameMode;
+            }
+
+            saveWorld() {
+                if (!this.world) return;
+                try {
+                    const edits = [];
+                    this.world.playerEdits.forEach((id, k) => {
+                        const [x, y, z] = k.split(',');
+                        edits.push(+x, +y, +z, id);
+                    });
+                    const p = this.player;
+                    localStorage.setItem(this.saveKey(), JSON.stringify({
+                        v: 1, seed: this.world.seed, edits,
+                        pos: [p.pos.x, p.pos.y, p.pos.z], yaw: p.yaw, pitch: p.pitch
+                    }));
+                    localStorage.setItem('mc3d_last_mode', this.gameMode);
+                } catch (e) { /* storage unavailable or full */ }
+            }
+
+            loadSave() {
+                try {
+                    const raw = localStorage.getItem(this.saveKey());
+                    if (!raw) return null;
+                    const d = JSON.parse(raw);
+                    if (!d || d.v !== 1 || typeof d.seed !== 'number' || !Array.isArray(d.edits)) return null;
+                    return d;
+                } catch (e) { return null; }
+            }
+
+            scheduleSave() {
+                clearTimeout(this._saveT);
+                this._saveT = setTimeout(() => this.saveWorld(), 1500);
+            }
+
+            createNewWorld(forceNew = false) {
+                if (this.world) {
+                    this.world.chunkMeshes.forEach(mesh => {
+                        this.scene.remove(mesh);
+                        mesh.geometry.dispose();
+                    });
+                }
+                this.zombies.forEach(z => z.destroy());
+                this.zombies = [];
+
+                this.projectiles.forEach(p => this.scene.remove(p.mesh));
+                this.projectiles = [];
+
+                this.lampLights.forEach(l => this.scene.remove(l.light));
+                this.lampLights = [];
+
+                if (forceNew) {
+                    try { localStorage.removeItem(this.saveKey()); } catch (e) {}
+                }
+                const saved = forceNew ? null : this.loadSave();
+                this.world = new VoxelWorld(256, 36, 256, saved ? saved.seed : Math.random() * 10000);
+                if (saved) {
+                    for (let i = 0; i + 3 < saved.edits.length; i += 4) {
+                        const x = saved.edits[i], y = saved.edits[i + 1], z = saved.edits[i + 2], id = saved.edits[i + 3];
+                        const key = this.world.key3D(x, y, z);
+                        this.world.modifiedBlocks.set(key, id);
+                        this.world.playerEdits.set(key, id);
+                        if (id === LAMP_ID && this.lampLights.length < 24) {
+                            const light = new THREE.PointLight(0xFDE047, 1.8, 16);
+                            light.position.set(x + 0.5, y + 0.5, z + 0.5);
+                            this.scene.add(light);
+                            this.lampLights.push({ x, y, z, light });
+                        }
+                    }
+                }
+                this.lastPlayerChunkX = null;
+                this.lastPlayerChunkZ = null;
+
+                const spawnX = 128;
+                const spawnZ = 128;
+                const spawnY = this.world.getTerrainHeight(spawnX, spawnZ) + 2;
+
+                this.player.pos.set(spawnX + 0.5, spawnY, spawnZ + 0.5);
+                this.player.vel.set(0, 0, 0);
+                this.player.hp = this.player.maxHp;
+                if (saved && Array.isArray(saved.pos)) {
+                    this.player.pos.set(saved.pos[0], saved.pos[1] + 0.3, saved.pos[2]);
+                    this.player.yaw = saved.yaw || 0;
+                    this.player.pitch = saved.pitch || 0;
+                    this.showToast('💾 შენი სამყარო აღდგა');
+                }
+                this.updateStatsUI();
+
+                this.streamChunksAroundPlayer(true);
+
+                if (this.gameMode === 'zombie') {
+                    for (let i = 0; i < 8; i++) {
+                        this.spawnZombieNearPlayer();
+                    }
+                }
+                this.updateCamera();
+            }
+
+            streamChunksAroundPlayer(force = false) {
+                const cs = this.world.chunkSize;
+                const pcx = Math.floor(this.player.pos.x / cs);
+                const pcz = Math.floor(this.player.pos.z / cs);
+
+                if (!force && pcx === this.lastPlayerChunkX && pcz === this.lastPlayerChunkZ) return;
+                this.lastPlayerChunkX = pcx;
+                this.lastPlayerChunkZ = pcz;
+
+                const maxCx = Math.ceil(this.world.sizeX / cs) - 1;
+                const maxCz = Math.ceil(this.world.sizeZ / cs) - 1;
+                const r = this.renderDistanceChunks;
+                const neededKeys = new Set();
+
+                for (let cx = Math.max(0, pcx - r); cx <= Math.min(maxCx, pcx + r); cx++) {
+                    for (let cz = Math.max(0, pcz - r); cz <= Math.min(maxCz, pcz + r); cz++) {
+                        const key = `${cx},${cz}`;
+                        neededKeys.add(key);
+                        if (!this.world.chunkMeshes.has(key)) {
+                            this.rebuildChunk(cx, cz);
+                        }
+                    }
+                }
+
+                for (const [key, mesh] of this.world.chunkMeshes.entries()) {
+                    if (!neededKeys.has(key)) {
+                        this.scene.remove(mesh);
+                        mesh.geometry.dispose();
+                        this.world.chunkMeshes.delete(key);
+                    }
+                }
+            }
+
+            rebuildChunk(cx, cz) {
+                const key = `${cx},${cz}`;
+                const existing = this.world.chunkMeshes.get(key);
+                if (existing) {
+                    this.scene.remove(existing);
+                    existing.geometry.dispose();
+                }
+
+                const geom = this.world.buildChunkGeometry(cx, cz, this.gridCols);
+                const mesh = new THREE.Mesh(geom, this.worldMaterial);
+                this.scene.add(mesh);
+                this.world.chunkMeshes.set(key, mesh);
+            }
+
+            rebuildChunksAroundBlock(bx, bz) {
+                const cs = this.world.chunkSize;
+                const cx = Math.floor(bx / cs);
+                const cz = Math.floor(bz / cs);
+                this.rebuildChunk(cx, cz);
+
+                const lx = bx % cs;
+                const lz = bz % cs;
+                const maxCx = Math.ceil(this.world.sizeX / cs) - 1;
+                const maxCz = Math.ceil(this.world.sizeZ / cs) - 1;
+
+                if (lx === 0 && cx > 0) this.rebuildChunk(cx - 1, cz);
+                if (lx === cs - 1 && cx < maxCx) this.rebuildChunk(cx + 1, cz);
+                if (lz === 0 && cz > 0) this.rebuildChunk(cx, cz - 1);
+                if (lz === cs - 1 && cz < maxCz) this.rebuildChunk(cx, cz + 1);
+            }
+
+            initHotbarUI() {
+                const container = document.getElementById('hotbarSlots');
+                container.innerHTML = '';
+
+                this.hotbarItems.forEach((item, index) => {
+                    const slot = document.createElement('button');
+                    slot.type = 'button';
+                    slot.className = `hotbar-slot relative h-11 sm:h-14 w-9 sm:w-14 rounded-xl border-2 border-slate-600/80 bg-slate-800/90 flex flex-col items-center justify-center p-0.5 cursor-pointer ${index === this.selectedSlot ? 'active' : ''}`;
+                    slot.title = `${index + 1}. ${item.name}`;
+                    slot.innerHTML = `
+                        <span class="absolute top-0 left-1 text-[8px] font-bold text-white/75">${index + 1}</span>
+                        <span class="text-base sm:text-xl leading-none" style="text-shadow: 0 1px 3px rgba(0,0,0,0.8)">${item.icon}</span>
+                        <span class="text-[7px] sm:text-[9px] font-bold text-slate-100 leading-tight truncate max-w-full px-0.5 mt-0.5">${item.shortName}</span>
+                    `;
+                    slot.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.selectSlot(index);
+                    });
+                    container.appendChild(slot);
+                });
+
+                this.updateHotbarUI();
+            }
+
+            selectSlot(index) {
+                this.selectedSlot = ((index % this.hotbarItems.length) + this.hotbarItems.length) % this.hotbarItems.length;
+                this.updateHotbarUI();
+                this.updateHeldVisual();
+            }
+
+            updateHotbarUI() {
+                const slots = document.querySelectorAll('.hotbar-slot');
+                slots.forEach((el, idx) => {
+                    if (idx === this.selectedSlot) el.classList.add('active');
+                    else el.classList.remove('active');
+                });
+                const currentItem = this.hotbarItems[this.selectedSlot];
+                const prefix = currentItem.kind === 'gun' ? '🔫 თოფი:' : (currentItem.kind === 'sword' ? '⚔️ ხმალი:' : '🧱 არჩეული:');
+                document.getElementById('selectedBlockLabel').textContent = `${prefix} ${currentItem.name}`;
+            }
+
+            initBackpackUI() {
+                const grid = document.getElementById('backpackGrid');
+                const searchInput = document.getElementById('backpackSearch');
+                const tabs = document.querySelectorAll('.bp-tab');
+                let currentCat = 'all';
+
+                const renderGrid = () => {
+                    const q = searchInput.value.trim().toLowerCase();
+                    grid.innerHTML = '';
+
+                    const filtered = ALL_200_ITEMS.filter(item => {
+                        const matchCat = currentCat === 'all' || item.category === currentCat;
+                        const matchSearch = !q || item.name.toLowerCase().includes(q);
+                        return matchCat && matchSearch;
+                    });
+
+                    filtered.forEach(item => {
+                        const card = document.createElement('button');
+                        card.type = 'button';
+                        card.className = 'bg-slate-800/90 hover:bg-slate-700 border border-white/15 hover:border-amber-400 rounded-2xl p-2 flex flex-col items-center justify-center text-center transition active:scale-95 cursor-pointer';
+                        card.innerHTML = `
+                            <div class="w-9 h-9 rounded-xl flex items-center justify-center text-xl mb-1 shadow-inner" style="background-color: ${item.color}33; border: 1px solid ${item.color}88">
+                                ${item.icon}
+                            </div>
+                            <div class="text-[10px] sm:text-xs font-bold text-white leading-tight line-clamp-2">${item.name}</div>
+                        `;
+                        card.addEventListener('click', () => {
+                            this.hotbarItems[this.selectedSlot] = item;
+                            this.initHotbarUI();
+                            this.updateHeldVisual();
+                            this.closeBackpack();
+                            this.sound.playPlace();
+                        });
+                        grid.appendChild(card);
+                    });
+                };
+
+                tabs.forEach(tab => {
+                    tab.addEventListener('click', () => {
+                        currentCat = tab.dataset.cat;
+                        tabs.forEach(t => {
+                            t.className = 'bp-tab px-3 py-1.5 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 whitespace-nowrap cursor-pointer';
+                        });
+                        tab.className = 'bp-tab px-3 py-1.5 rounded-xl bg-amber-500 text-slate-950 whitespace-nowrap cursor-pointer';
+                        renderGrid();
+                    });
+                });
+
+                searchInput.addEventListener('input', renderGrid);
+                renderGrid();
+            }
+
+            openBackpack() {
+                if (document.pointerLockElement === this.canvas) {
+                    document.exitPointerLock();
+                }
+                this.isPlaying = false;
+                document.getElementById('backpackModal').classList.remove('hidden');
+            }
+
+            closeBackpack() {
+                document.getElementById('backpackModal').classList.add('hidden');
+                this.enterGameplay();
+            }
+
+            async toggleFullscreen() {
+                const docEl = document.documentElement;
+                try {
+                    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                        if (docEl.requestFullscreen) {
+                            await docEl.requestFullscreen();
+                        } else if (docEl.webkitRequestFullscreen) {
+                            await docEl.webkitRequestFullscreen();
+                        }
+                        if (screen.orientation && screen.orientation.lock) {
+                            screen.orientation.lock('landscape').catch(() => {});
+                        }
+                        document.getElementById('fullscreenLabel').textContent = 'გამოსვლა';
+                        document.getElementById('landscapeBanner').classList.add('hidden');
+                    } else {
+                        if (document.exitFullscreen) {
+                            await document.exitFullscreen();
+                        } else if (document.webkitExitFullscreen) {
+                            await document.webkitExitFullscreen();
+                        }
+                        document.getElementById('fullscreenLabel').textContent = 'სრული ეკრანი';
+                    }
+                } catch (e) {
+                    console.warn('Fullscreen request fallback:', e);
+                }
+            }
+
+            checkOrientationBanner() {
+                const isLandscape = window.innerWidth > window.innerHeight;
+                const isFs = Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+                const banner = document.getElementById('landscapeBanner');
+                if (this.isTouchDevice && isLandscape && !isFs) {
+                    banner.classList.remove('hidden');
+                } else {
+                    banner.classList.add('hidden');
+                }
+            }
+
+            setGameMode(mode) {
+                this.gameMode = mode;
+                const zBtn = document.getElementById('modeZombieBtn');
+                const pBtn = document.getElementById('modePeacefulBtn');
+
+                if (mode === 'zombie') {
+                    zBtn.className = 'p-2.5 rounded-2xl border-2 border-rose-500 bg-rose-500/20 text-left transition cursor-pointer';
+                    pBtn.className = 'p-2.5 rounded-2xl border-2 border-slate-700 bg-slate-800/60 text-left transition cursor-pointer hover:border-slate-500';
+                    this.isNight = true;
+                    document.getElementById('healthContainer').classList.remove('hidden');
+                    document.getElementById('zombieKillsDisplay').parentElement.classList.remove('hidden');
+                } else {
+                    document.getElementById('healthContainer').classList.add('hidden');
+                    document.getElementById('zombieKillsDisplay').parentElement.classList.add('hidden');
+                    pBtn.className = 'p-2.5 rounded-2xl border-2 border-emerald-500 bg-emerald-500/20 text-left transition cursor-pointer';
+                    zBtn.className = 'p-2.5 rounded-2xl border-2 border-slate-700 bg-slate-800/60 text-left transition cursor-pointer hover:border-slate-500';
+                    this.isNight = false;
+                    this.zombies.forEach(z => z.destroy());
+                    this.zombies = [];
+                }
+                this.applyAtmosphere();
+            }
+
+            toggleFlying() {
+                this.player.flying = !this.player.flying;
+                this.player.vel.y = 0;
+            }
+
+            enterGameplay() {
+                this.sound.init();
+                this.isPlaying = true;
+                document.getElementById('menuOverlay').classList.add('hidden');
+                document.getElementById('backpackModal').classList.add('hidden');
+                document.getElementById('crosshair').classList.remove('hidden');
+                document.getElementById('targetTooltip').classList.remove('hidden');
+                document.getElementById('hudTop').classList.remove('hidden');
+                document.getElementById('hotbarContainer').classList.remove('hidden');
+                this.updateHeldVisual();
+
+                if (this.isTouchDevice) {
+                    document.getElementById('touchControls').classList.remove('hidden');
+                } else {
+                    try {
+                        this.canvas.requestPointerLock();
+                    } catch (err) {
+                        console.warn('Pointer lock fallback:', err);
+                    }
+                }
+            }
+
+            pauseGameplay() {
+                this.isPlaying = false;
+                document.getElementById('menuOverlay').classList.remove('hidden');
+                document.getElementById('crosshair').classList.add('hidden');
+                document.getElementById('targetTooltip').classList.add('hidden');
+                document.getElementById('touchControls').classList.add('hidden');
+                document.getElementById('startBtn').textContent = '▶️ თამაშის გაგრძელება';
+            }
+
+            bindEvents() {
+                window.addEventListener('pagehide', () => this.saveWorld());
+                window.addEventListener('beforeunload', () => this.saveWorld());
+                document.addEventListener('visibilitychange', () => { if (document.hidden) this.saveWorld(); });
+                setInterval(() => { if (this.isPlaying) this.saveWorld(); }, 10000);
+
+                document.getElementById('modeZombieBtn').addEventListener('click', () => {
+                    this.saveWorld();
+                    this.setGameMode('zombie');
+                    this.createNewWorld();
+                    this.enterGameplay();
+                });
+
+                document.getElementById('modePeacefulBtn').addEventListener('click', () => {
+                    this.saveWorld();
+                    this.setGameMode('peaceful');
+                    this.createNewWorld();
+                    this.enterGameplay();
+                });
+
+                document.getElementById('startBtn').addEventListener('click', () => {
+                    this.enterGameplay();
+                });
+
+                document.getElementById('regenBtn').addEventListener('click', () => {
+                    this.sound.init();
+                    this.createNewWorld(true);
+                    this.sound.playPlace();
+                });
+
+                document.getElementById('fullscreenBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.toggleFullscreen();
+                });
+
+                document.getElementById('menuFullscreenBtn').addEventListener('click', () => {
+                    this.toggleFullscreen();
+                });
+
+                document.getElementById('landscapeFsBtn').addEventListener('click', () => {
+                    this.toggleFullscreen();
+                });
+
+                document.getElementById('backpackBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.openBackpack();
+                });
+
+                document.getElementById('closeBackpackBtn').addEventListener('click', () => {
+                    this.closeBackpack();
+                });
+
+                document.getElementById('timeBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.isNight = !this.isNight;
+                    this.applyAtmosphere();
+                });
+
+                document.getElementById('muteBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isMuted = this.sound.toggleMute();
+                    document.getElementById('muteIcon').textContent = isMuted ? '🔇' : '🔊';
+                });
+
+                document.getElementById('pauseBtn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (document.pointerLockElement === this.canvas) {
+                        document.exitPointerLock();
+                    }
+                    this.pauseGameplay();
+                });
+
+                document.addEventListener('pointerlockchange', () => {
+                    this.isLocked = (document.pointerLockElement === this.canvas);
+                    if (this.isLocked) {
+                        this.isPlaying = true;
+                        document.getElementById('menuOverlay').classList.add('hidden');
+                        document.getElementById('crosshair').classList.remove('hidden');
+                        document.getElementById('targetTooltip').classList.remove('hidden');
+                        document.getElementById('hudTop').classList.remove('hidden');
+                        document.getElementById('hotbarContainer').classList.remove('hidden');
+                    } else if (!this.isTouchDevice && document.getElementById('backpackModal').classList.contains('hidden')) {
+                        this.pauseGameplay();
+                    }
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (!this.isLocked) return;
+                    const sensitivity = 0.0022;
+                    this.player.yaw -= e.movementX * sensitivity;
+                    this.player.pitch -= e.movementY * sensitivity;
+                    const maxPitch = Math.PI / 2 - 0.02;
+                    this.player.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.player.pitch));
+                });
+
+                document.addEventListener('mousedown', (e) => {
+                    if (!this.isLocked) return;
+                    if (e.button === 0) {
+                        this.primaryAction();
+                    } else if (e.button === 2) {
+                        this.placeBlock();
+                    }
+                });
+
+                document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+                document.addEventListener('wheel', (e) => {
+                    if (!this.isLocked) return;
+                    if (e.deltaY > 0) this.selectSlot(this.selectedSlot + 1);
+                    else if (e.deltaY < 0) this.selectSlot(this.selectedSlot - 1);
+                }, { passive: true });
+
+                document.addEventListener('keydown', (e) => {
+                    this.keys[e.code] = true;
+
+                    if (e.code >= 'Digit1' && e.code <= 'Digit8') {
+                        const idx = parseInt(e.code.replace('Digit', ''), 10) - 1;
+                        this.selectSlot(idx);
+                    }
+
+                    if (e.code === 'KeyE') {
+                        const modal = document.getElementById('backpackModal');
+                        if (modal.classList.contains('hidden')) this.openBackpack();
+                        else this.closeBackpack();
+                    }
+
+                    if (e.code === 'KeyF') this.toggleFlying();
+                    if (e.code === 'KeyM') document.getElementById('muteBtn').click();
+                    if (e.code === 'KeyN') document.getElementById('timeBtn').click();
+
+                    if (e.code === 'Space' && !e.repeat) {
+                        const now = performance.now();
+                        if (now - this.lastSpaceTime < 280) {
+                            this.toggleFlying();
+                            this.lastSpaceTime = 0;
+                        } else {
+                            this.lastSpaceTime = now;
+                        }
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    this.keys[e.code] = false;
+                });
+
+                this.bindTouchControls();
+
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                    this.checkOrientationBanner();
+                });
+
+                window.addEventListener('orientationchange', () => {
+                    setTimeout(() => this.checkOrientationBanner(), 150);
+                });
+            }
+
+            bindTouchControls() {
+                const joyZone = document.getElementById('joystickZone');
+                const joyKnob = document.getElementById('joystickKnob');
+                let joyTouchId = null;
+
+                joyZone.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    const t = e.changedTouches[0];
+                    joyTouchId = t.identifier;
+                    this.updateJoystick(t, joyZone, joyKnob);
+                }, { passive: false });
+
+                joyZone.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    for (let t of e.changedTouches) {
+                        if (t.identifier === joyTouchId) {
+                            this.updateJoystick(t, joyZone, joyKnob);
+                        }
+                    }
+                }, { passive: false });
+
+                const resetJoystick = (e) => {
+                    for (let t of e.changedTouches) {
+                        if (t.identifier === joyTouchId) {
+                            joyTouchId = null;
+                            this.touchMove.x = 0;
+                            this.touchMove.y = 0;
+                            joyKnob.style.transform = 'translate(0px, 0px)';
+                        }
+                    }
+                };
+                joyZone.addEventListener('touchend', resetJoystick);
+                joyZone.addEventListener('touchcancel', resetJoystick);
+
+                let lookTouchId = null;
+                let lastLookX = 0;
+                let lastLookY = 0;
+
+                this.canvas.addEventListener('touchstart', (e) => {
+                    if (!this.isPlaying) return;
+                    const t = e.changedTouches[0];
+                    lookTouchId = t.identifier;
+                    lastLookX = t.clientX;
+                    lastLookY = t.clientY;
+                }, { passive: true });
+
+                this.canvas.addEventListener('touchmove', (e) => {
+                    if (!this.isPlaying) return;
+                    for (let t of e.changedTouches) {
+                        if (t.identifier === lookTouchId) {
+                            const dx = t.clientX - lastLookX;
+                            const dy = t.clientY - lastLookY;
+                            lastLookX = t.clientX;
+                            lastLookY = t.clientY;
+
+                            this.player.yaw -= dx * 0.0055;
+                            this.player.pitch -= dy * 0.0055;
+                            const maxPitch = Math.PI / 2 - 0.02;
+                            this.player.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.player.pitch));
+                        }
+                    }
+                }, { passive: true });
+
+                document.getElementById('touchBreakBtn').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.primaryAction();
+                });
+
+                document.getElementById('touchPlaceBtn').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.placeBlock();
+                });
+
+                document.getElementById('touchJumpBtn').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (this.player.flying) {
+                        this.player.pos.y += 1.2;
+                    } else if (this.player.onGround) {
+                        this.player.vel.y = 8.4;
+                        this.player.onGround = false;
+                    }
+                });
+
+                document.getElementById('touchFlyBtn').addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.toggleFlying();
+                });
+            }
+
+            updateJoystick(touch, zone, knob) {
+                const rect = zone.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                const maxRadius = rect.width / 2 - 14;
+
+                let dx = touch.clientX - centerX;
+                let dy = touch.clientY - centerY;
+                const dist = Math.hypot(dx, dy);
+
+                if (dist > maxRadius) {
+                    dx = (dx / dist) * maxRadius;
+                    dy = (dy / dist) * maxRadius;
+                }
+
+                knob.style.transform = `translate(${dx}px, ${dy}px)`;
+                this.touchMove.x = dx / maxRadius;
+                this.touchMove.y = -dy / maxRadius;
+            }
+
+            raycastZombies(maxDist = 5.2) {
+                const origin = this.camera.position;
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
+
+                let closestZombie = null;
+                let closestDist = maxDist;
+
+                for (const z of this.zombies) {
+                    const center = new THREE.Vector3(z.pos.x, z.pos.y + 0.95, z.pos.z);
+                    const toZombie = center.clone().sub(origin);
+                    const proj = toZombie.dot(dir);
+                    if (proj < 0 || proj > closestDist) continue;
+
+                    const closestPoint = origin.clone().addScaledVector(dir, proj);
+                    const perpDist = closestPoint.distanceTo(center);
+                    if (perpDist < 0.78) {
+                        closestDist = proj;
+                        closestZombie = z;
+                    }
+                }
+                return closestZombie;
+            }
+
+            raycastVoxel(maxDist = 6.5) {
+                const origin = this.camera.position;
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
+
+                let x = Math.floor(origin.x);
+                let y = Math.floor(origin.y);
+                let z = Math.floor(origin.z);
+
+                const stepX = dir.x > 0 ? 1 : -1;
+                const stepY = dir.y > 0 ? 1 : -1;
+                const stepZ = dir.z > 0 ? 1 : -1;
+
+                const tDeltaX = dir.x !== 0 ? Math.abs(1 / dir.x) : 1e9;
+                const tDeltaY = dir.y !== 0 ? Math.abs(1 / dir.y) : 1e9;
+                const tDeltaZ = dir.z !== 0 ? Math.abs(1 / dir.z) : 1e9;
+
+                let tMaxX = dir.x > 0 ? (x + 1 - origin.x) * tDeltaX : (origin.x - x) * tDeltaX;
+                let tMaxY = dir.y > 0 ? (y + 1 - origin.y) * tDeltaY : (origin.y - y) * tDeltaY;
+                let tMaxZ = dir.z > 0 ? (z + 1 - origin.z) * tDeltaZ : (origin.z - z) * tDeltaZ;
+
+                let normal = [0, 0, 0];
+                let dist = 0;
+
+                while (dist <= maxDist) {
+                    const block = this.world.getBlock(x, y, z);
+                    if (block !== 0 && block !== WATER_ID) {
+                        return { pos: [x, y, z], normal, block };
+                    }
+
+                    if (tMaxX < tMaxY) {
+                        if (tMaxX < tMaxZ) {
+                            x += stepX;
+                            dist = tMaxX;
+                            tMaxX += tDeltaX;
+                            normal = [-stepX, 0, 0];
+                        } else {
+                            z += stepZ;
+                            dist = tMaxZ;
+                            tMaxZ += tDeltaZ;
+                            normal = [0, 0, -stepZ];
+                        }
+                    } else {
+                        if (tMaxY < tMaxZ) {
+                            y += stepY;
+                            dist = tMaxY;
+                            tMaxY += tDeltaY;
+                            normal = [0, -stepY, 0];
+                        } else {
+                            z += stepZ;
+                            dist = tMaxZ;
+                            tMaxZ += tDeltaZ;
+                            normal = [0, 0, -stepZ];
+                        }
+                    }
+                }
+                return null;
+            }
+
+            fireGun(gunItem) {
+                this.swingTimer = 0.22;
+                this.sound.playGunshot(Boolean(gunItem.isLaser));
+
+                const origin = this.camera.position.clone();
+                const dir = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion).normalize();
+                origin.addScaledVector(dir, 0.7);
+
+                const bulletGeo = gunItem.isLaser
+                    ? new THREE.BoxGeometry(0.08, 0.08, 0.65)
+                    : new THREE.BoxGeometry(0.11, 0.11, 0.25);
+                const bulletMat = new THREE.MeshBasicMaterial({ color: gunItem.bulletColor || 0xFBBF24 });
+                const mesh = new THREE.Mesh(bulletGeo, bulletMat);
+                mesh.position.copy(origin);
+                mesh.quaternion.copy(this.camera.quaternion);
+                this.scene.add(mesh);
+
+                this.projectiles.push({
+                    mesh,
+                    pos: origin,
+                    vel: dir.multiplyScalar(42),
+                    damage: gunItem.damage || 2,
+                    life: 1.6
+                });
+            }
+
+            updateProjectiles(dt) {
+                const steps = 3;
+                for (let k = 0; k < steps; k++) this.stepProjectiles(dt / steps);
+            }
+
+            stepProjectiles(dt) {
+                for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                    const p = this.projectiles[i];
+                    p.life -= dt;
+                    p.pos.addScaledVector(p.vel, dt);
+                    p.mesh.position.copy(p.pos);
+
+                    let hit = false;
+
+                    // Check collision with any Zombie
+                    for (let j = this.zombies.length - 1; j >= 0; j--) {
+                        const z = this.zombies[j];
+                        const zCenter = new THREE.Vector3(z.pos.x, z.pos.y + 0.95, z.pos.z);
+                        if (p.pos.distanceTo(zCenter) < 0.85) {
+                            const knockDir = p.vel.clone().setY(0).normalize();
+                            z.takeDamage(p.damage, knockDir);
+                            this.sound.playZombieHit();
+
+                            if (z.hp <= 0) {
+                                z.destroy();
+                                this.zombies.splice(j, 1);
+                                this.stats.zombiesDefeated++;
+                                this.saveStats();
+                            }
+                            hit = true;
+                            break;
+                        }
+                    }
+
+                    // Check collision with solid terrain block
+                    if (!hit) {
+                        const b = this.world.getBlock(Math.floor(p.pos.x), Math.floor(p.pos.y), Math.floor(p.pos.z));
+                        if (b !== 0 && b !== WATER_ID && b !== WINDOW_ID) {
+                            hit = true;
+                        }
+                    }
+
+                    if (hit || p.life <= 0) {
+                        this.scene.remove(p.mesh);
+                        p.mesh.geometry.dispose();
+                        p.mesh.material.dispose();
+                        this.projectiles.splice(i, 1);
+                    }
+                }
+            }
+
+            primaryAction() {
+                this.swingTimer = 0.25;
+                const currentItem = this.hotbarItems[this.selectedSlot];
+
+                // 1. If holding a Gun, fire 3D bullets/lasers!
+                if (currentItem.kind === 'gun') {
+                    this.fireGun(currentItem);
+                    return;
+                }
+
+                // 2. If aiming at a Zombie in melee range, swing sword/hand!
+                if (this.targetedZombie) {
+                    const dmg = currentItem.kind === 'sword' ? (currentItem.damage || 3) : 1;
+                    const knockDir = new THREE.Vector3(
+                        this.targetedZombie.pos.x - this.player.pos.x,
+                        0,
+                        this.targetedZombie.pos.z - this.player.pos.z
+                    ).normalize();
+
+                    this.targetedZombie.takeDamage(dmg, knockDir);
+                    this.sound.playZombieHit();
+
+                    if (this.targetedZombie.hp <= 0) {
+                        this.targetedZombie.destroy();
+                        this.zombies = this.zombies.filter(z => z !== this.targetedZombie);
+                        this.targetedZombie = null;
+                        this.stats.zombiesDefeated++;
+                        this.saveStats();
+                    }
+                    return;
+                }
+
+                // 3. Otherwise break the targeted block
+                this.breakBlock();
+            }
+
+            breakBlock() {
+                if (!this.targetedBlock) return;
+                const [bx, by, bz] = this.targetedBlock.pos;
+                if (by === 0) return;
+
+                const oldBlock = this.world.getBlock(bx, by, bz);
+                if (oldBlock !== 0) {
+                    this.world.setBlock(bx, by, bz, 0);
+                    this.rebuildChunksAroundBlock(bx, bz);
+                    this.sound.playBreak(oldBlock);
+                    this.scheduleSave();
+
+                    // Remove point light if a Lamp was broken
+                    if (oldBlock === LAMP_ID) {
+                        const idx = this.lampLights.findIndex(l => l.x === bx && l.y === by && l.z === bz);
+                        if (idx !== -1) {
+                            this.scene.remove(this.lampLights[idx].light);
+                            this.lampLights.splice(idx, 1);
+                        }
+                    }
+                }
+            }
+
+            placeBlock() {
+                const currentItem = this.hotbarItems[this.selectedSlot];
+                if (currentItem.kind !== 'block') return;
+
+                if (!this.targetedBlock) return;
+                const [bx, by, bz] = this.targetedBlock.pos;
+                const [nx, ny, nz] = this.targetedBlock.normal;
+                const px = bx + nx;
+                const py = by + ny;
+                const pz = bz + nz;
+
+                if (!this.world.inBounds(px, py, pz)) return;
+                const existing = this.world.getBlock(px, py, pz);
+                if (existing !== 0 && existing !== WATER_ID) return;
+
+                const pMinX = this.player.pos.x - this.player.radius;
+                const pMaxX = this.player.pos.x + this.player.radius;
+                const pMinY = this.player.pos.y;
+                const pMaxY = this.player.pos.y + this.player.height;
+                const pMinZ = this.player.pos.z - this.player.radius;
+                const pMaxZ = this.player.pos.z + this.player.radius;
+
+                const overlapsPlayer =
+                    px + 1 > pMinX && px < pMaxX &&
+                    py + 1 > pMinY && py < pMaxY &&
+                    pz + 1 > pMinZ && pz < pMaxZ;
+
+                if (overlapsPlayer) return;
+
+                const blockIdToPlace = currentItem.blockId || 3;
+                this.world.setBlock(px, py, pz, blockIdToPlace);
+
+                // If placing a Door (🚪), also place top half if air so it forms a tall 2-block door!
+                if (blockIdToPlace === DOOR_ID && this.world.inBounds(px, py + 1, pz) && this.world.getBlock(px, py + 1, pz) === 0) {
+                    this.world.setBlock(px, py + 1, pz, DOOR_ID);
+                }
+
+                // If placing a Lamp (💡), spawn a real warm Three.js PointLight!
+                if (blockIdToPlace === LAMP_ID) {
+                    const light = new THREE.PointLight(0xFDE047, 1.8, 16);
+                    light.position.set(px + 0.5, py + 0.5, pz + 0.5);
+                    this.scene.add(light);
+                    this.lampLights.push({ x: px, y: py, z: pz, light });
+                    if (this.lampLights.length > 24) {
+                        const oldest = this.lampLights.shift();
+                        this.scene.remove(oldest.light);
+                    }
+                }
+
+                this.rebuildChunksAroundBlock(px, pz);
+                this.sound.playPlace();
+
+                this.stats.blocksPlaced++;
+                this.scheduleSave();
+                this.saveStats();
+            }
+
+            checkCollision(pos, radius = this.player.radius, height = this.player.height) {
+                const minX = Math.floor(pos.x - radius);
+                const maxX = Math.floor(pos.x + radius);
+                const minY = Math.floor(pos.y);
+                const maxY = Math.floor(pos.y + height);
+                const minZ = Math.floor(pos.z - radius);
+                const maxZ = Math.floor(pos.z + radius);
+
+                for (let y = minY; y <= maxY; y++) {
+                    for (let z = minZ; z <= maxZ; z++) {
+                        for (let x = minX; x <= maxX; x++) {
+                            const b = this.world.getBlock(x, y, z);
+                            // Doors (12) can be walked through easily!
+                            if (b !== 0 && b !== WATER_ID && b !== DOOR_ID) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+
+            spawnZombieNearPlayer() {
+                if (this.gameMode !== 'zombie' || this.zombies.length >= 16) return;
+
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 16 + Math.random() * 24;
+                const zx = Math.floor(this.player.pos.x + Math.cos(angle) * dist);
+                const zz = Math.floor(this.player.pos.z + Math.sin(angle) * dist);
+
+                if (zx < 5 || zx >= this.world.sizeX - 5 || zz < 5 || zz >= this.world.sizeZ - 5) return;
+
+                for (let y = this.world.sizeY - 3; y > 10; y--) {
+                    const b = this.world.getBlock(zx, y, zz);
+                    if (b !== 0 && b !== WATER_ID) {
+                        const zombie = new ZombieEntity(this.scene, zx + 0.5, y + 1.05, zz + 0.5);
+                        this.zombies.push(zombie);
+                        break;
+                    }
+                }
+            }
+
+            updateZombies(dt) {
+                if (this.gameMode !== 'zombie' || !this.isPlaying) return;
+
+                this.zombieSpawnTimer += dt;
+                if (this.zombieSpawnTimer > 4.5) {
+                    this.zombieSpawnTimer = 0;
+                    this.spawnZombieNearPlayer();
+                }
+
+                for (let i = this.zombies.length - 1; i >= 0; i--) {
+                    const z = this.zombies[i];
+
+                    const distToPlayer = z.pos.distanceTo(this.player.pos);
+                    if (distToPlayer > 68) {
+                        z.destroy();
+                        this.zombies.splice(i, 1);
+                        continue;
+                    }
+
+                    if (z.hurtTimer > 0) {
+                        z.hurtTimer -= dt;
+                        if (z.hurtTimer <= 0) {
+                            z.materials.forEach(m => m.emissive.setHex(0x000000));
+                        }
+                    }
+
+                    if (z.attackCooldown > 0) z.attackCooldown -= dt;
+
+                    const toPlayerX = this.player.pos.x - z.pos.x;
+                    const toPlayerZ = this.player.pos.z - z.pos.z;
+                    const horizDist = Math.hypot(toPlayerX, toPlayerZ);
+
+                    if (horizDist > 0.1) {
+                        const dirX = toPlayerX / horizDist;
+                        const dirZ = toPlayerZ / horizDist;
+                        z.group.rotation.y = Math.atan2(dirX, dirZ);
+
+                        if (z.hurtTimer <= 0) {
+                            const speed = 2.65;
+                            z.vel.x = dirX * speed;
+                            z.vel.z = dirZ * speed;
+                        }
+                    }
+
+                    z.vel.y -= 24.0 * dt;
+
+                    const nextX = z.pos.clone();
+                    nextX.x += z.vel.x * dt;
+                    if (!this.checkCollision(nextX, z.radius, z.height)) {
+                        z.pos.x = nextX.x;
+                    } else if (z.onGround) {
+                        z.vel.y = 7.6;
+                        z.onGround = false;
+                    }
+
+                    const nextZ = z.pos.clone();
+                    nextZ.z += z.vel.z * dt;
+                    if (!this.checkCollision(nextZ, z.radius, z.height)) {
+                        z.pos.z = nextZ.z;
+                    } else if (z.onGround) {
+                        z.vel.y = 7.6;
+                        z.onGround = false;
+                    }
+
+                    const nextY = z.pos.clone();
+                    nextY.y += z.vel.y * dt;
+                    if (!this.checkCollision(nextY, z.radius, z.height)) {
+                        z.pos.y = nextY.y;
+                        z.onGround = false;
+                    } else {
+                        if (z.vel.y < 0) z.onGround = true;
+                        z.vel.y = 0;
+                    }
+
+                    z.walkCycle += dt * 7.5;
+                    z.leftLeg.rotation.x = Math.sin(z.walkCycle) * 0.55;
+                    z.rightLeg.rotation.x = -Math.sin(z.walkCycle) * 0.55;
+                    z.leftArm.rotation.x = Math.sin(z.walkCycle) * 0.12;
+                    z.rightArm.rotation.x = -Math.sin(z.walkCycle) * 0.12;
+
+                    z.group.position.copy(z.pos);
+
+                    if (distToPlayer < 1.35 && z.attackCooldown <= 0 && this.player.invulnTimer <= 0 && !this.player.flying) {
+                        z.attackCooldown = 1.25;
+                        this.damagePlayer(1);
+                    }
+                }
+            }
+
+            showToast(text) {
+                let el = document.getElementById('gameToast');
+                if (!el) {
+                    el = document.createElement('div');
+                    el.id = 'gameToast';
+                    el.className = 'fixed top-1/4 left-1/2 -translate-x-1/2 z-40 pointer-events-none bg-slate-950/85 text-white font-extrabold text-base sm:text-xl px-5 py-2.5 rounded-2xl border border-white/30 shadow-2xl transition-opacity duration-500';
+                    document.body.appendChild(el);
+                }
+                el.textContent = text;
+                el.style.opacity = '1';
+                clearTimeout(this._toastT);
+                this._toastT = setTimeout(() => { el.style.opacity = '0'; }, 2200);
+            }
+
+            damagePlayer(amount) {
+                this.player.hp = Math.max(0, this.player.hp - amount);
+                this.player.invulnTimer = 0.8;
+                this.player.sinceHit = 0;
+                this.sound.playPlayerHurt();
+                this.updateStatsUI();
+
+                const hurtEl = document.getElementById('hurtOverlay');
+                hurtEl.classList.remove('hurt-flash');
+                void hurtEl.offsetWidth;
+                hurtEl.classList.add('hurt-flash');
+
+                if (this.player.hp <= 0) {
+                    this.showToast('💀 დაიღუპე! თავიდან ვიწყებთ');
+                    this.zombies.forEach(z => z.destroy());
+                    this.zombies = [];
+                    this.player.invulnTimer = 2.5;
+                    this.player.hp = this.player.maxHp;
+                    const spawnY = this.world.getTerrainHeight(128, 128) + 3;
+                    this.player.pos.set(128.5, spawnY, 128.5);
+                    this.player.vel.set(0, 0, 0);
+                    this.updateStatsUI();
+                }
+            }
+
+            updatePhysics(dt) {
+                dt = Math.min(dt, 0.05);
+
+                if (this.player.invulnTimer > 0) {
+                    this.player.invulnTimer -= dt;
+                }
+
+                // Slow health regeneration after 8s without damage
+                this.player.sinceHit = (this.player.sinceHit || 0) + dt;
+                if (this.isPlaying && this.player.hp < this.player.maxHp && this.player.sinceHit > 8) {
+                    this.player.sinceHit = 6;
+                    this.player.hp++;
+                    this.updateStatsUI();
+                }
+
+                // Animate first-person sword/gun swing
+                if (this.swingTimer > 0) {
+                    this.swingTimer -= dt;
+                    this.handGroup.rotation.x = -Math.sin((0.25 - this.swingTimer) * 14) * 0.85;
+                } else {
+                    this.handGroup.rotation.x = 0;
+                }
+
+                const forward = new THREE.Vector3(-Math.sin(this.player.yaw), 0, -Math.cos(this.player.yaw));
+                const right = new THREE.Vector3(Math.cos(this.player.yaw), 0, -Math.sin(this.player.yaw));
+
+                const moveDir = new THREE.Vector3();
+                if (this.isPlaying) {
+                    if (this.keys['KeyW'] || this.keys['ArrowUp']) moveDir.add(forward);
+                    if (this.keys['KeyS'] || this.keys['ArrowDown']) moveDir.sub(forward);
+                    if (this.keys['KeyD'] || this.keys['ArrowRight']) moveDir.add(right);
+                    if (this.keys['KeyA'] || this.keys['ArrowLeft']) moveDir.sub(right);
+
+                    if (Math.abs(this.touchMove.x) > 0.08 || Math.abs(this.touchMove.y) > 0.08) {
+                        moveDir.addScaledVector(forward, this.touchMove.y);
+                        moveDir.addScaledVector(right, this.touchMove.x);
+                    }
+                }
+
+                if (moveDir.lengthSq() > 0) moveDir.normalize();
+
+                const moveSpeed = this.player.flying ? 12.5 : 6.4;
+                this.player.vel.x = moveDir.x * moveSpeed;
+                this.player.vel.z = moveDir.z * moveSpeed;
+
+                if (this.player.flying) {
+                    let flyY = 0;
+                    if (this.isPlaying) {
+                        if (this.keys['Space']) flyY += 1;
+                        if (this.keys['ShiftLeft'] || this.keys['ShiftRight']) flyY -= 1;
+                    }
+                    this.player.vel.y = flyY * 9.0;
+                    this.player.onGround = false;
+                } else {
+                    this.player.vel.y -= 24.0 * dt;
+                    if (this.isPlaying && this.keys['Space'] && this.player.onGround) {
+                        this.player.vel.y = 8.4;
+                        this.player.onGround = false;
+                    }
+                }
+
+                const nextX = this.player.pos.clone();
+                nextX.x += this.player.vel.x * dt;
+                if (!this.checkCollision(nextX)) {
+                    this.player.pos.x = nextX.x;
+                }
+
+                const nextZ = this.player.pos.clone();
+                nextZ.z += this.player.vel.z * dt;
+                if (!this.checkCollision(nextZ)) {
+                    this.player.pos.z = nextZ.z;
+                }
+
+                const nextY = this.player.pos.clone();
+                nextY.y += this.player.vel.y * dt;
+                if (!this.checkCollision(nextY)) {
+                    this.player.pos.y = nextY.y;
+                    this.player.onGround = false;
+                } else {
+                    if (this.player.vel.y < 0) {
+                        this.player.onGround = true;
+                    }
+                    this.player.vel.y = 0;
+                }
+
+                const margin = 1.5;
+                this.player.pos.x = Math.max(margin, Math.min(this.world.sizeX - margin, this.player.pos.x));
+                this.player.pos.z = Math.max(margin, Math.min(this.world.sizeZ - margin, this.player.pos.z));
+                if (this.player.pos.y < -10) {
+                    this.player.pos.y = 28;
+                    this.player.vel.y = 0;
+                }
+
+                const horizSpeed = Math.hypot(this.player.vel.x, this.player.vel.z);
+                if (this.player.onGround && horizSpeed > 0.5 && this.isPlaying) {
+                    this.player.stepTimer += dt;
+                    if (this.player.stepTimer > 0.36) {
+                        this.player.stepTimer = 0;
+                        this.sound.playStep();
+                    }
+                } else {
+                    this.player.stepTimer = 0.25;
+                }
+
+                this.streamChunksAroundPlayer(false);
+                this.updateProjectiles(dt);
+                this.updateZombies(dt);
+                this.updateCamera();
+            }
+
+            updateCamera() {
+                this.camera.position.set(
+                    this.player.pos.x,
+                    this.player.pos.y + this.player.eyeHeight,
+                    this.player.pos.z
+                );
+                this.camera.rotation.y = this.player.yaw;
+                this.camera.rotation.x = this.player.pitch;
+
+                const tooltipEl = document.getElementById('targetTooltip');
+                const tooltipText = document.getElementById('targetTooltipText');
+
+                if (this.isPlaying) {
+                    this.targetedZombie = this.raycastZombies(12.0);
+                    this.targetedBlock = this.raycastVoxel(6.5);
+
+                    if (this.targetedZombie) {
+                        this.highlightMesh.visible = false;
+                        tooltipEl.classList.remove('hidden');
+                        tooltipText.textContent = `🧟 ზომბი (${this.targetedZombie.hp}/${this.targetedZombie.maxHp} ❤️)`;
+                        tooltipText.className = 'bg-rose-950/90 backdrop-blur-md text-rose-200 px-3 py-1 rounded-full text-xs sm:text-sm font-extrabold border border-rose-400/50 shadow-lg whitespace-nowrap';
+                    } else if (this.targetedBlock) {
+                        const [hx, hy, hz] = this.targetedBlock.pos;
+                        this.highlightMesh.position.set(hx + 0.5, hy + 0.5, hz + 0.5);
+                        this.highlightMesh.visible = true;
+
+                        const blockName = EXTRA_BLOCK_NAMES[this.targetedBlock.block] || 'ბლოკი';
+                        tooltipEl.classList.remove('hidden');
+                        tooltipText.textContent = `მიზანი: ${blockName}`;
+                        tooltipText.className = 'bg-slate-950/80 backdrop-blur-md text-white px-3 py-1 rounded-full text-xs sm:text-sm font-bold border border-white/20 shadow-lg whitespace-nowrap';
+                    } else {
+                        this.highlightMesh.visible = false;
+                        tooltipEl.classList.add('hidden');
+                    }
+                } else {
+                    this.highlightMesh.visible = false;
+                    tooltipEl.classList.add('hidden');
+                }
+            }
+
+            updateHUD(now) {
+                if (now - this.lastFpsUpdate >= 400) {
+                    this.lastFpsUpdate = now;
+                    const px = Math.floor(this.player.pos.x);
+                    const py = Math.floor(this.player.pos.y);
+                    const pz = Math.floor(this.player.pos.z);
+                    document.getElementById('coordsDisplay').textContent = `X: ${px} | Y: ${py} | Z: ${pz}`;
+                }
+            }
+
+            animate = (now) => {
+                requestAnimationFrame(this.animate);
+                const dt = (now - this.lastFrameTime) / 1000;
+                this.lastFrameTime = now;
+
+                this.updatePhysics(dt);
+                this.updateHUD(now);
+                this.renderer.render(this.scene, this.camera);
+            }
+
+            start() {
+                requestAnimationFrame(this.animate);
+            }
+        }
+
+        window.onload = function () {
+            const game = new MinecraftGame();
+            game.start();
+        };
+    </script>
+</body>
+</html>
